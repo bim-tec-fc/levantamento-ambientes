@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Levantamento de Ambientes</title>
+<meta name="description" content="Levantamento de ambientes em campo. Núcleo BIM, Ferreira Costa.">
+<meta name="author" content="Melqui Domingos, Núcleo BIM, Ferreira Costa">
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1E2024" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Levantamento">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<script>
+  // Aplica o tema salvo antes de desenhar a página (evita piscar).
+  try { var t = localStorage.getItem('levamb.tema'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+<link rel="stylesheet" href="fc-base.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="banner" class="banner" hidden>
+  <span>Nova versão da ferramenta disponível.</span>
+  <button class="btn btn-primary" type="button">Atualizar</button>
+</div>
+
+<div id="app">
+  <noscript><p style="padding:24px">Esta ferramenta precisa de JavaScript ligado no navegador.</p></noscript>
+</div>
+
+<div id="overlay" class="overlay" hidden></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<input type="file" id="in-cam" accept="image/*" capture="environment" hidden>
+<input type="file" id="in-gal" accept="image/*" multiple hidden>
+<input type="file" id="in-import" accept=".json,application/json" hidden>
+
+<script src="xlsx.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

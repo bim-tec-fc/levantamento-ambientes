@@ -1,0 +1,139 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   fc-base.css — Design System dos Painéis de Logística da Ferreira Costa
+   Fonte da verdade dos tokens: DESIGN.md (formato Google Labs). NÃO edite cores
+   soltas aqui — mexa no DESIGN.md e regenere. Importe num painel com:
+       <link rel="stylesheet" href="fc-base.css">
+   e sirva a pasta fonts/ ao lado. Barlow é SELF-HOSTED (o pod/CSP não alcança CDN).
+   Suporta claro/escuro automático (prefers-color-scheme) + override [data-theme].
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Fontes self-hosted (Barlow / Barlow Condensed) ── */
+@font-face{font-family:'Barlow';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/barlow-400.woff2') format('woff2')}
+@font-face{font-family:'Barlow';font-style:normal;font-weight:500;font-display:swap;src:url('fonts/barlow-500.woff2') format('woff2')}
+@font-face{font-family:'Barlow';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/barlow-600.woff2') format('woff2')}
+@font-face{font-family:'Barlow';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/barlow-700.woff2') format('woff2')}
+@font-face{font-family:'Barlow Condensed';font-style:normal;font-weight:500;font-display:swap;src:url('fonts/barlow-condensed-500.woff2') format('woff2')}
+@font-face{font-family:'Barlow Condensed';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/barlow-condensed-600.woff2') format('woff2')}
+@font-face{font-family:'Barlow Condensed';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/barlow-condensed-700.woff2') format('woff2')}
+
+/* ── Tokens — LIGHT ── */
+:root{
+  --fc-primary:#CF1030; --fc-primary-hover:#B00E29; --fc-primary-alt:#DA0812; --fc-red-text:#CF1030;
+  --fc-ink:#272525; --fc-ink-soft:#636363; --fc-muted:#9A9A9A;
+  --fc-bg:#F5F5F5; --fc-surface:#FFFFFF; --fc-border:#E4E4E4;
+  --fc-success:#62BF1B; --fc-warning:#E8A400; --fc-danger:#CF1030; --fc-info:#2563EB;
+  --fc-grid:#E9E9E9; --fc-hover:#FAFAFA; --fc-chip-off:#EEEEEE; --fc-late:rgba(207,16,48,.05);
+  --fc-field:#FFFFFF; --fc-focus:rgba(207,16,48,.14);
+  --fc-cond:'Barlow Condensed',system-ui,sans-serif;
+  --fc-body:'Barlow',system-ui,sans-serif;
+  --fc-r-sm:4px; --fc-r-lg:8px; --fc-r-full:9999px;
+  --fc-s-xs:4px; --fc-s-sm:8px; --fc-s-md:12px; --fc-s-lg:16px; --fc-s-xl:24px;
+  --fc-shadow:0 1px 3px rgba(39,37,37,.06); --fc-shadow-pop:0 4px 16px rgba(39,37,37,.12);
+}
+/* ── Tokens — DARK (auto pelo SO + override manual [data-theme]) ── */
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+  --fc-red-text:#FF5C74;
+  --fc-ink:#EAEAEA; --fc-ink-soft:#B4B4B4; --fc-muted:#7E7E7E;
+  --fc-bg:#141518; --fc-surface:#1E2024; --fc-border:#33363C;
+  --fc-success:#7BD22E; --fc-warning:#F0B429; --fc-info:#5B8DEF;
+  --fc-grid:#2C2F35; --fc-hover:#25272C; --fc-chip-off:#2C2F35; --fc-late:rgba(255,92,116,.10);
+  --fc-field:#191B1F; --fc-focus:rgba(255,92,116,.20);
+  --fc-shadow:0 1px 3px rgba(0,0,0,.45); --fc-shadow-pop:0 6px 20px rgba(0,0,0,.55);
+}}
+:root[data-theme="dark"]{
+  --fc-red-text:#FF5C74;
+  --fc-ink:#EAEAEA; --fc-ink-soft:#B4B4B4; --fc-muted:#7E7E7E;
+  --fc-bg:#141518; --fc-surface:#1E2024; --fc-border:#33363C;
+  --fc-success:#7BD22E; --fc-warning:#F0B429; --fc-info:#5B8DEF;
+  --fc-grid:#2C2F35; --fc-hover:#25272C; --fc-chip-off:#2C2F35; --fc-late:rgba(255,92,116,.10);
+  --fc-field:#191B1F; --fc-focus:rgba(255,92,116,.20);
+  --fc-shadow:0 1px 3px rgba(0,0,0,.45); --fc-shadow-pop:0 6px 20px rgba(0,0,0,.55);
+}
+
+/* ── Base ── */
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--fc-body);background:var(--fc-bg);color:var(--fc-ink);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.fc-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+code{font-family:ui-monospace,monospace;font-size:.86em;background:var(--fc-chip-off);padding:1px 5px;border-radius:3px}
+
+/* ── Tipografia ── */
+.fc-display{font-family:var(--fc-cond);font-weight:700;font-size:2rem;line-height:1.1;text-transform:uppercase}
+.fc-h2{font-family:var(--fc-cond);font-weight:700;font-size:1.25rem;letter-spacing:.02em;text-transform:uppercase}
+.fc-kpi-n{font-family:var(--fc-cond);font-weight:700;font-size:2.25rem;line-height:1.05}
+.fc-label{font-family:var(--fc-cond);font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--fc-ink-soft)}
+
+/* ── Shells oficiais ── */
+/* A · topbar (painel simples) */
+.fc-topbar{background:var(--fc-surface);border-top:5px solid var(--fc-primary);border-bottom:1px solid var(--fc-border)}
+.fc-topbar-in{max-width:1200px;margin:0 auto;padding:16px 26px;display:flex;justify-content:space-between;align-items:flex-end;gap:16px}
+.fc-brand{font-family:var(--fc-cond);font-weight:700;font-size:12px;letter-spacing:3px;text-transform:uppercase;color:var(--fc-primary)}
+.fc-title{font-family:var(--fc-cond);font-weight:700;font-size:28px;line-height:1;text-transform:uppercase;letter-spacing:.5px;color:var(--fc-primary)}
+.fc-main{max-width:1200px;margin:0 auto;padding:22px 26px}
+/* B · sidebar (portal multi-visão) */
+.fc-shell{display:flex;min-height:100vh}
+.fc-sidebar{width:260px;flex-shrink:0;background:var(--fc-surface);border-right:3px solid var(--fc-primary);overflow-y:auto}
+.fc-content{flex:1;padding:22px 26px;min-width:0}
+
+/* ── Cartão / seção ── */
+.card{background:var(--fc-surface);border:1px solid var(--fc-border);border-radius:var(--fc-r-sm);box-shadow:var(--fc-shadow)}
+.fc-sec-h{display:flex;align-items:baseline;gap:12px;border-bottom:2px solid var(--fc-ink);padding-bottom:8px;margin-bottom:16px}
+.fc-sec-t{font-family:var(--fc-cond);font-weight:700;font-size:20px;text-transform:uppercase;letter-spacing:.5px}
+
+/* ── KPI ── */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.kpi{background:var(--fc-surface);border:1px solid var(--fc-border);border-top:4px solid var(--fc-border);border-radius:var(--fc-r-sm);box-shadow:var(--fc-shadow);padding:16px}
+.kpi.red{border-top-color:var(--fc-danger)} .kpi.green{border-top-color:var(--fc-success)}
+.kpi.amber{border-top-color:var(--fc-warning)} .kpi.info{border-top-color:var(--fc-info)}
+.kpi-l{font-family:var(--fc-cond);font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--fc-ink-soft);min-height:26px}
+.kpi-n{font-family:var(--fc-cond);font-weight:700;font-size:2.25rem;line-height:1.05;margin-top:4px}
+.kpi-s{font-size:12px;color:var(--fc-muted);margin-top:2px}
+
+/* ── Tabela ── */
+.fc-table{width:100%;border-collapse:collapse;background:var(--fc-surface);font-size:13px}
+.fc-table thead th{font-family:var(--fc-cond);font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--fc-ink-soft);text-align:left;padding:10px 12px;border-bottom:2px solid var(--fc-ink)}
+.fc-table tbody td{padding:9px 12px;border-bottom:1px solid var(--fc-border)}
+.fc-table tbody tr:hover{background:var(--fc-hover)}
+.fc-table tbody tr.late{background:var(--fc-late)}
+.fc-table .r{text-align:right}
+
+/* ── Chips / farol / botões ── */
+.chip{display:inline-flex;align-items:center;gap:5px;background:var(--fc-primary);color:#fff;border-radius:var(--fc-r-sm);padding:4px 11px;font-family:var(--fc-cond);font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;user-select:none}
+.chip.off{background:var(--fc-chip-off);color:var(--fc-ink-soft)}
+.farol{display:inline-flex;align-items:center;gap:6px;border-radius:var(--fc-r-full);padding:3px 12px;font-family:var(--fc-cond);font-weight:600;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#fff}
+.farol.g{background:var(--fc-success)} .farol.a{background:var(--fc-warning)} .farol.r{background:var(--fc-danger)}
+.btn{font-family:var(--fc-cond);font-weight:600;font-size:13px;letter-spacing:.04em;text-transform:uppercase;border:none;border-radius:var(--fc-r-sm);height:38px;padding:0 18px;cursor:pointer}
+.btn-primary{background:var(--fc-primary);color:#fff} .btn-primary:hover{background:var(--fc-primary-hover)}
+.btn-ghost{background:var(--fc-field);border:1px solid var(--fc-border);color:var(--fc-ink)} .btn-ghost:hover{border-color:var(--fc-primary)}
+
+/* ── Inputs / campos ── */
+.field{display:flex;flex-direction:column;gap:5px}
+.field>label{font-family:var(--fc-cond);font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--fc-ink-soft)}
+.input{font-family:var(--fc-body);font-size:13px;background:var(--fc-field);border:1px solid var(--fc-border);border-radius:var(--fc-r-sm);padding:0 11px;height:38px;color:var(--fc-ink);width:100%}
+textarea.input{height:auto;padding:9px 11px;resize:vertical;min-height:64px}
+.input:focus{outline:none;border-color:var(--fc-primary);box-shadow:0 0 0 3px var(--fc-focus)}
+.input::placeholder{color:var(--fc-muted)}
+.check{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--fc-ink);cursor:pointer}
+.check input{accent-color:var(--fc-primary);width:16px;height:16px}
+
+/* ── Barra de filtros ── */
+.filterbar{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;padding:14px 16px}
+.fg{display:flex;flex-direction:column;gap:6px}
+.fg-t{font-family:var(--fc-cond);font-weight:600;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--fc-muted)}
+.ms{display:inline-flex;align-items:center;gap:8px;background:var(--fc-field);border:1px solid var(--fc-border);border-radius:var(--fc-r-sm);padding:0 11px;height:34px;font-size:12px;font-weight:600;color:var(--fc-ink);cursor:pointer;min-width:150px}
+.ms .badge{background:var(--fc-primary);color:#fff;border-radius:3px;padding:1px 7px;font-size:11px;margin-left:auto}
+.fsep{width:1px;align-self:stretch;background:var(--fc-border);margin:0 2px}
+
+/* ── Gráficos SEM lib (barras). Para Chart.js: use as cores de série abaixo. ──
+   Série canônica = [--fc-danger, --fc-warning, --fc-success, --fc-info];
+   grid = --fc-grid; eixo/texto = --fc-ink-soft; meta = --fc-info tracejado. */
+.vbars{display:flex;align-items:flex-end;gap:14px;height:150px;border-bottom:1px solid var(--fc-border);position:relative}
+.vbars .gl{position:absolute;left:0;right:0;border-top:1px dashed var(--fc-grid)}
+.vcol{flex:1;display:flex;flex-direction:column-reverse;position:relative;z-index:1}
+.vseg.r{background:var(--fc-danger)} .vseg.a{background:var(--fc-warning)} .vseg.g{background:var(--fc-success)}
+.hbars{display:flex;flex-direction:column;gap:11px}
+.hrow{display:grid;grid-template-columns:96px 1fr 52px;align-items:center;gap:10px}
+.htrack{height:16px;background:var(--fc-grid);border-radius:3px;overflow:hidden;display:flex}
+.hseg.r{background:var(--fc-danger)} .hseg.a{background:var(--fc-warning)} .hseg.g{background:var(--fc-success)}
+
+@media(max-width:820px){.kpis{grid-template-columns:1fr 1fr}.fc-sidebar{width:64px}}

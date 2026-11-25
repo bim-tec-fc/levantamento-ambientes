@@ -1,0 +1,142 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   app.css: ajustes do Levantamento de Ambientes sobre o fc-base.css.
+   Uso em campo, no celular: alvos de toque de 44px e campos com fonte de 16px
+   (abaixo disso o iPhone dá zoom ao tocar no campo). Só tokens --fc-*.
+   Núcleo BIM · Ferreira Costa · Melqui Domingos
+   ═══════════════════════════════════════════════════════════════════════════ */
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:120px}
+body{min-height:100vh;font-size:15px}
+body.travado{overflow:hidden}
+a{color:var(--fc-red-text)}
+button{font:inherit;color:inherit}
+
+/* ── Topo ── */
+.tb{position:sticky;top:0;z-index:20;padding-top:env(safe-area-inset-top)}
+.tb-in{max-width:760px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:8px}
+.voltar{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;margin-left:-10px;color:var(--fc-ink);border-radius:var(--fc-r-sm);flex-shrink:0}
+.voltar:active{background:var(--fc-hover)}
+.tb-tit{flex:1;min-width:0}
+.tb .fc-brand{font-size:11px;letter-spacing:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb .fc-title{font-size:22px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.salvo{font-family:var(--fc-cond);font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--fc-muted);white-space:nowrap}
+.salvo.ok{color:var(--fc-success)} .salvo.erro{color:var(--fc-red-text)}
+
+.tabs{display:flex;max-width:760px;margin:0 auto}
+.tab{flex:1;text-align:center;padding:12px 4px 10px;font-family:var(--fc-cond);font-weight:600;font-size:14px;letter-spacing:.05em;text-transform:uppercase;color:var(--fc-ink-soft);text-decoration:none;border-bottom:3px solid transparent}
+.tab.on{color:var(--fc-red-text);border-bottom-color:var(--fc-primary)}
+
+/* ── Corpo ── */
+.wrap{max-width:760px;margin:0 auto;padding:16px 16px 40px}
+.wrap.com-rodape{padding-bottom:calc(96px + env(safe-area-inset-bottom))}
+.sec{padding:16px;margin-bottom:12px;display:flex;flex-direction:column;gap:12px}
+.sec .fc-h2{margin-bottom:-2px}
+.fc-sec-h{margin:18px 0 12px}
+.dica{font-size:13px;color:var(--fc-ink-soft);line-height:1.4}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.aviso{padding:12px 14px;margin-bottom:4px;border-left:4px solid var(--fc-warning);font-size:14px}
+.vazio{padding:24px 16px;text-align:center;color:var(--fc-ink-soft);line-height:1.6}
+
+/* Campos maiores para o dedo */
+.input{height:44px;font-size:16px}
+textarea.input{font-size:16px}
+select.input{padding-right:8px}
+.field .num.input,.num .input{font-variant-numeric:tabular-nums}
+.input.outro{margin-top:6px}
+.btn{height:44px;padding:0 16px;font-size:14px;display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+.btn:disabled{opacity:.4;cursor:default}
+.btn.icone{width:44px;padding:0;font-size:22px;font-family:var(--fc-body);flex-shrink:0}
+.btn.perigo{color:var(--fc-red-text)}
+.btn.perigo:hover{border-color:var(--fc-danger)}
+.check{min-height:44px}
+.check input{width:20px;height:20px}
+
+.seg{display:flex;flex-wrap:wrap;gap:8px}
+.seg .chip{min-height:40px;padding:8px 16px;font-size:14px;border:none}
+.filtro{margin:12px 0 4px}
+
+/* ── KPIs ── */
+.kpis.k3{grid-template-columns:repeat(3,1fr);gap:8px}
+.kpis .kpi{padding:10px 12px}
+.kpis .kpi-l{min-height:0}
+.kpis .kpi-n{font-size:1.75rem}
+.res{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.res .kpi{padding:8px 10px;box-shadow:none}
+.res .kpi-l{min-height:0}
+.res .kpi-n{font-size:1.5rem}
+.alerta{border-left:4px solid var(--fc-warning);background:var(--fc-hover);padding:8px 10px;font-size:13px;border-radius:var(--fc-r-sm);margin-top:6px}
+
+/* ── Listas ── */
+.item{display:flex;align-items:center;gap:12px;padding:12px 14px;margin-top:8px;text-decoration:none;color:inherit}
+.item:active{background:var(--fc-hover)}
+.item-cod{font-family:var(--fc-cond);font-weight:700;font-size:18px;color:var(--fc-red-text);min-width:52px}
+.item-c{flex:1;min-width:0}
+.item-t{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item-s{font-size:13px;color:var(--fc-ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item-d{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0}
+.item-area{font-family:var(--fc-cond);font-weight:600;font-size:15px}
+.farol{padding:2px 10px;font-size:11px;white-space:nowrap}
+.status{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;margin-bottom:12px}
+.pend{font-size:13px;color:var(--fc-ink-soft)}
+
+/* ── Medidas irregulares ── */
+.parte{display:grid;grid-template-columns:20px 1fr auto 1fr;gap:4px 8px;align-items:end;padding-bottom:10px;border-bottom:1px dashed var(--fc-border)}
+.parte-n{font-family:var(--fc-cond);font-weight:700;color:var(--fc-ink-soft);padding-bottom:12px}
+.parte .x{padding-bottom:12px;color:var(--fc-ink-soft)}
+.parte .check{grid-column:2 / 4}
+.parte .btn.icone{justify-self:end}
+
+/* ── Pavimentos ── */
+.pav-linha{display:grid;grid-template-columns:1fr 84px 44px;gap:8px;align-items:end}
+
+/* ── Fotos ── */
+.fotos{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
+.fotos:empty{display:none}
+.fotos.compacto{grid-template-columns:repeat(auto-fill,minmax(72px,1fr))}
+.foto{position:relative;aspect-ratio:1;border-radius:var(--fc-r-sm);overflow:hidden;background:var(--fc-chip-off);border:1px solid var(--fc-border);padding:0;cursor:pointer}
+.foto img{width:100%;height:100%;object-fit:cover;display:block}
+.foto .leg{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);color:#fff;font-size:11px;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
+
+/* ── Instalações ── */
+.inst{border:1px solid var(--fc-border);border-left:4px solid var(--fc-ink-soft);border-radius:var(--fc-r-sm);padding:10px 12px;display:flex;flex-direction:column;gap:10px}
+.inst-h{display:flex;justify-content:space-between;align-items:center;margin:-4px -4px -4px 0}
+
+.acoes-fim{display:flex;gap:10px;flex-wrap:wrap;margin:4px 0 12px}
+.acoes-fim .btn{flex:1}
+
+/* ── Exportar ── */
+.exp{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;width:100%;padding:12px 14px;background:var(--fc-field);border:1px solid var(--fc-border);border-left:4px solid var(--fc-primary);border-radius:var(--fc-r-sm);cursor:pointer}
+.exp:active,.exp:hover{background:var(--fc-hover)}
+.exp b{font-family:var(--fc-cond);font-weight:700;font-size:16px;text-transform:uppercase;letter-spacing:.03em}
+.exp span{font-size:13px;color:var(--fc-ink-soft)}
+.pronto{border-top:4px solid var(--fc-success)}
+.arq{font-size:13px;color:var(--fc-ink-soft);word-break:break-all}
+.perigo-zona .fc-h2{color:var(--fc-red-text)}
+
+.rodape-info{margin-top:28px;display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--fc-muted)}
+.rodape-info .tema{max-width:240px}
+
+/* ── Barra fixa de baixo ── */
+.bottombar{position:fixed;left:0;right:0;bottom:0;z-index:15;display:flex;gap:10px;justify-content:center;background:var(--fc-surface);border-top:1px solid var(--fc-border);box-shadow:var(--fc-shadow-pop);padding:10px 16px calc(10px + env(safe-area-inset-bottom))}
+.bottombar .btn{flex:1;max-width:360px}
+
+/* ── Foto em tela cheia ── */
+.overlay{position:fixed;inset:0;z-index:50;background:var(--fc-bg);display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+.ov-top,.ov-bot{display:flex;gap:8px;padding:10px 16px;background:var(--fc-surface)}
+.ov-top .input{flex:1}
+.ov-img{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;background:#000}
+.ov-img img{max-width:100%;max-height:100%;object-fit:contain}
+.ov-img p{color:#fff}
+
+/* ── Avisos ── */
+.toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:60;max-width:calc(100% - 32px);background:var(--fc-ink);color:var(--fc-surface);padding:10px 16px;border-radius:var(--fc-r-sm);font-size:14px;box-shadow:var(--fc-shadow-pop)}
+.banner{position:sticky;top:0;z-index:30;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;padding:8px 16px;background:var(--fc-surface);border-bottom:2px solid var(--fc-info);font-size:14px}
+.banner .btn{height:36px}
+
+@media (max-width:420px){
+  .tb .fc-title{font-size:19px}
+  .kpis .kpi-n{font-size:1.45rem}
+  .res .kpi-n{font-size:1.2rem}
+  .kpis .kpi,.res .kpi{padding:8px}
+}
+@media (min-width:821px){ .kpis.k3{grid-template-columns:repeat(3,1fr)} }
