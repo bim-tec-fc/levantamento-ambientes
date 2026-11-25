@@ -8,7 +8,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 'use strict';
 
-const VERSAO = '1.1.0';
+const VERSAO = '1.2.0';
 const FORMATO_BACKUP = 'fc-levantamento-ambientes';
 
 // ───────────────────────── Listas padrão ─────────────────────────
@@ -137,7 +137,7 @@ function novoAmbiente(L, pavId) {
   return {
     id: uid(), codigo: proximoCodigo(L, pavId), pavimentoId: pavId, nome: '', uso: '',
     forma: 'ret', comp: '', larg: '', partes: [], lados: '', peDireito: '',
-    piso: '', parede: '', forro: '', conservacao: '', obs: '', fotos: [], inst: [], ancora: null, criadoEm: Date.now(),
+    piso: '', parede: '', forro: '', conservacao: '', obs: '', fotos: [], inst: [], objetos: [], nivel: '', ancora: null, criadoEm: Date.now(),
   };
 }
 const novaParte = (c = '', l = '') => ({ id: uid(), c, l, desc: false });
@@ -152,12 +152,20 @@ function normalizar(L) {
   L.portas = L.portas.filter(p => idsAmb.has(p.ambA));
   for (const p of L.portas) {
     if (p.ambB && !idsAmb.has(p.ambB)) { p.ambB = null; p.bonecaB = ''; }
-    for (const k of ['largura', 'boneca', 'espessura', 'bonecaB']) p[k] = p[k] ?? '';
+    if (!p.modelo) p.modelo = p.tipo === 'vao' ? 'vao' : 'giro';   // dados da v1.1
+    delete p.tipo;
+    for (const k of ['largura', 'boneca', 'espessura', 'bonecaB', 'peitoril']) p[k] = p[k] ?? '';
+    p.altura = p.altura ?? Planta.PADRAO_ABERTURA[p.modelo][1];
     p.canto = p.canto === 'fim' ? 'fim' : 'ini';
     p.cantoB = p.cantoB === 'fim' ? 'fim' : 'ini';
+    p.abre = p.abre === 'fora' ? 'fora' : 'dentro';
+    p.lado = p.lado === 'fim' ? 'fim' : 'ini';
+    if (Planta.ehJanela(p.modelo)) { p.ambB = null; p.bonecaB = ''; }
   }
   for (const a of L.ambientes) {
     a.ancora = a.ancora ?? null;
+    a.nivel = a.nivel ?? '';
+    a.objetos = Array.isArray(a.objetos) ? a.objetos : [];
     a.partes = Array.isArray(a.partes) ? a.partes : [];
     a.fotos = Array.isArray(a.fotos) ? a.fotos : [];
     a.inst = Array.isArray(a.inst) ? a.inst : [];
@@ -285,6 +293,7 @@ async function rotear() {
   await flush();
   fecharOverlay(false);
   fecharDialogo();
+  fechar3D();
   const p = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   try {
     if (p[0] === 'l' && p[1]) {
@@ -683,6 +692,15 @@ const SETA = { cima: '↑', baixo: '↓', esq: '←', dir: '→' };
 const rotuloCanto = (parede, canto) => Planta.HORIZ(parede)
   ? (canto === 'fim' ? 'Do canto direito' : 'Do canto esquerdo')
   : (canto === 'fim' ? 'Do canto de cima' : 'Do canto de baixo');
+const rotulosAte = f => Planta.HORIZ(f) ? ['Até o canto esquerdo', 'Até o canto direito'] : ['Até o canto de baixo', 'Até o canto de cima'];
+const rotulosLado = f => Planta.HORIZ(f) ? ['Esquerda', 'Direita'] : ['Embaixo', 'Em cima'];
+const nomeModelo = m => (Planta.MODELOS.find(x => x[0] === m) || [0, 'Porta'])[1];
+const MODELOS_PORTA = Planta.MODELOS.filter(m => !Planta.ehJanela(m[0]));
+const MODELOS_JANELA = Planta.MODELOS.filter(m => Planta.ehJanela(m[0]));
+/** Número para guardar como o usuário digitaria (vírgula, 2 casas no máximo). */
+const vnum = n => n == null || !Number.isFinite(n) ? '' : String(r2(n)).replace('.', ',');
+/** Número para mostrar nos campos do painel (sempre 2 casas). */
+const vexib = n => n == null || !Number.isFinite(n) ? '' : n.toFixed(2).replace('.', ',');
 const ICONE_ENQUADRAR = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>';
 
 const ambPorId = (L, id) => L.ambientes.find(a => a.id === id);
@@ -705,7 +723,7 @@ async function excluirAmbiente(L, a) {
   L.portas = L.portas.filter(p => p.ambA !== a.id);
   for (const p of L.portas) if (p.ambB === a.id) { p.ambB = null; p.bonecaB = ''; p.cantoB = 'ini'; }
   L.ambientes = L.ambientes.filter(x => x !== a);
-  if (ctx.sel === a.id) ctx.sel = null;
+  if (ctx.sel === a.id) { ctx.sel = null; ctx.item = null; }
   if (ctx.amb === a) ctx.amb = null;
   salvarDepois();
   await flush();
@@ -731,6 +749,7 @@ function htmlPlanta(L) {
       <button class="btn btn-ghost icone" data-acao="pl-zoom" data-v="1.3" aria-label="Aproximar">+</button>
       <button class="btn btn-ghost icone" data-acao="pl-zoom" data-v="0.77" aria-label="Afastar">−</button>
       <button class="btn btn-ghost icone" data-acao="pl-enquadrar" aria-label="Enquadrar a planta">${ICONE_ENQUADRAR}</button>
+      <button class="btn btn-ghost icone pl-3d" data-acao="pl-3d" aria-label="Ver em 3D">3D</button>
     </div>
   </main>
   <div id="pl-painel" class="pl-painel"></div>`;
@@ -748,23 +767,34 @@ function tamanhoSvg(el) {
   el.setAttribute('viewBox', `0 0 ${W} ${H}`);
   return [W, H];
 }
+const opcoesPlanta = () => ({ sel: ctx.sel, item: ctx.item, mais: true, toque: true });
 
 function desenharPlanta() {
   const L = ctx.lev, el = $('#planta');
   if (!L || !el) return;
   const pav = pavAtual(L);
   const lay = Planta.layout(L, pav);
-  if (ctx.sel && !lay.pos.has(ctx.sel)) ctx.sel = null;
+  if (ctx.sel && !lay.pos.has(ctx.sel)) { ctx.sel = null; ctx.item = null; }
+  if (ctx.item && !Planta.infoItem(lay, ctx.item)) ctx.item = null;
   const [W, H] = tamanhoSvg(el);
   if (!lay.pos.size) { delete ctx.views[pav]; el.innerHTML = ''; painelPlanta(lay); return; }
   const v0 = ctx.views[pav];
-  // reenquadra quando pedido ou quando o ambiente selecionado (ou o "+" das portas dele) ficaria fora da tela
+  // reenquadra quando pedido ou quando o ambiente recém-salvo (ou o "+" das portas dele) ficaria fora da tela
   const r = ctx.verSel && ctx.sel && lay.pos.get(ctx.sel);
   ctx.verSel = false;
   const fora = v0 && r && (v0.ox + (r.x - 0.8) * v0.s < 0 || v0.ox + (r.x + r.dx + 0.8) * v0.s > W ||
     v0.oy - (r.y + r.dy + 0.8) * v0.s < 0 || v0.oy - (r.y - 0.8) * v0.s > H);
   if (!v0 || ctx.focar || fora) { ctx.views[pav] = Planta.enquadrar(lay, W, H); ctx.focar = null; }
-  el.innerHTML = Planta.svg(L, pav, lay, ctx.views[pav], { sel: ctx.sel, mais: true });
+  if (ctx.verItem) {
+    // centraliza o item recém-selecionado se ele ficou fora da área visível (o painel ocupa parte da tela)
+    ctx.verItem = false;
+    const c = pontoDoItem(lay, ctx.item), v = ctx.views[pav];
+    if (c) {
+      const px = v.ox + c[0] * v.s, py = v.oy - c[1] * v.s;
+      if (px < 30 || px > W - 60 || py < 30 || py > H - 30) { v.ox += W / 2 - px; v.oy += H / 2 - py; }
+    }
+  }
+  el.innerHTML = Planta.svg(L, pav, lay, ctx.views[pav], opcoesPlanta());
   painelPlanta(lay);
 }
 let rafPlanta = 0;
@@ -775,10 +805,12 @@ function agendarPlanta() {
     const L = ctx.lev, el = $('#planta');
     if (!L || !el) return;
     const pav = pavAtual(L);
-    el.innerHTML = Planta.svg(L, pav, Planta.layout(L, pav), ctx.views[pav], { sel: ctx.sel, mais: true });
+    if (!ctx.views[pav]) return;
+    el.innerHTML = Planta.svg(L, pav, Planta.layout(L, pav), ctx.views[pav], opcoesPlanta());
   });
 }
 
+// ── Painel de baixo ──
 function painelPlanta(lay) {
   const L = ctx.lev, pav = pavAtual(L), p = $('#pl-painel');
   if (!p) return;
@@ -789,10 +821,16 @@ function painelPlanta(lay) {
     return;
   }
   const avisos = Planta.conferir(L, pav, lay).map(x => `<div class="alerta">${h(x)}</div>`).join('');
+  if (ctx.escolha) { p.innerHTML = painelEscolha(); return; }
+  if (ctx.item) {
+    const html = painelItem(lay);
+    if (html) { p.innerHTML = avisos + html; return; }
+    ctx.item = null;
+  }
   const a = ctx.sel && ambPorId(L, ctx.sel);
   if (!a) {
     p.innerHTML = `${avisos}
-      <p class="dica">Toque num ambiente para incluir porta ou corrigir medidas. Toque no <b>+</b> de uma porta para desenhar o ambiente do outro lado. Arraste para mover; use dois dedos para aproximar.</p>
+      <p class="dica">Toque num ambiente para incluir porta ou objeto, ou numa parede para medir o trecho e inserir porta, janela ou ponto naquele lugar. Toque no <b>+</b> de uma porta para desenhar o ambiente do outro lado.</p>
       <div class="fc-row"><button class="btn btn-ghost" data-acao="pl-novo-raiz">+ Ambiente sem ligação</button></div>`;
     return;
   }
@@ -801,10 +839,11 @@ function painelPlanta(lay) {
   p.innerHTML = `${avisos}
     <div class="pl-sel">
       <div class="pl-sel-t"><b class="num">${h(a.codigo)}</b> ${h(a.nome || '(sem nome)')}</div>
-      <div class="pl-sel-s num">${fmt(num(a.comp))} × ${fmt(num(a.larg))} m · ${fmt(c.area)} m²</div>
+      <div class="pl-sel-s num">${fmt(num(a.comp))} × ${fmt(num(a.larg))} m · ${fmt(c.area)} m²${num(a.nivel) ? ' · NV ' + Planta.fmtNivel(num(a.nivel)) : ''}</div>
     </div>
-    <div class="pl-acoes">
+    <div class="pl-acoes g4">
       <button class="btn btn-primary" data-acao="pl-nova-porta">+ Porta</button>
+      <button class="btn btn-ghost" data-acao="pl-novo-obj">+ Objeto</button>
       <button class="btn btn-ghost" data-acao="pl-editar-amb">Medidas</button>
       <a class="btn btn-ghost" href="#/l/${h(L.id)}/a/${h(a.id)}">Detalhes</a>
     </div>
@@ -812,10 +851,261 @@ function painelPlanta(lay) {
       const deA = x.ambA === a.id;
       const outro = ambPorId(L, deA ? x.ambB : x.ambA);
       const parede = deA ? x.parede : Planta.OPOSTA[x.parede];
-      return `<button class="chip off" data-acao="pl-editar-porta" data-id="${h(x.id)}">${x.tipo === 'vao' ? 'Vão' : 'Porta'} ${SETA[parede]} ${fmt(num(x.largura))}${outro ? ' · ' + h(outro.codigo) : ' · sem ambiente'}</button>`;
-    }).join('')}</div>` : '<p class="dica">Sem portas ainda. Toque em <b>+ Porta</b>.</p>'}`;
+      return `<button class="chip off" data-acao="pl-sel-porta" data-id="${h(x.id)}">${h(nomeModelo(x.modelo))} ${SETA[parede]} ${fmt(num(x.largura))}${outro ? ' · ' + h(outro.codigo) : ''}</button>`;
+    }).join('')}</div>` : '<p class="dica">Sem portas ainda. Toque numa parede ou em <b>+ Porta</b>.</p>'}`;
 }
 
+function campoPe(rot, k, val, { numero = true, dica = '', extra = '' } = {}) {
+  const id = fid();
+  return `<div class="field${numero ? ' num' : ''}"><label for="${id}">${h(rot)}</label>
+    <input id="${id}" class="input" data-pe="${k}" value="${h(val ?? '')}" autocomplete="off" ${numero ? 'inputmode="decimal" enterkeyhint="done"' : ''} ${extra}>
+    ${dica ? `<div class="dica">${dica}</div>` : ''}</div>`;
+}
+const opcoesPe = (k, atual, lista) => `<div class="seg">${lista.map(([v, t]) =>
+  `<button class="chip${atual === v ? '' : ' off'}" data-acao="pe-op" data-k="${k}" data-v="${v}">${h(t)}</button>`).join('')}</div>`;
+
+function painelItem(lay) {
+  const L = ctx.lev, it = ctx.item, info = Planta.infoItem(lay, it);
+  if (!info) return '';
+  const vv = info.valores;
+  if (it.tipo === 'seg') {
+    const a = ambPorId(L, it.amb);
+    const desc = !info.vE && !info.vD ? 'Parede inteira: mudar aqui muda a medida do ambiente.'
+      : !info.vE || !info.vD ? `Do canto até a ${info.vE ? (info.vE.g.janela ? 'janela' : 'porta') : (info.vD.g.janela ? 'janela' : 'porta')} (a boneca): mudar aqui ${(info.vE || info.vD).lado === 'A' ? 'move a abertura' : 'move este ambiente'}.`
+        : 'Trecho entre duas aberturas.';
+    return `<div class="pl-sel"><div class="pl-sel-t">Parede ${NOMES_PAREDE[it.face]} de <b class="num">${h(a.codigo)}</b></div></div>
+      ${campoPe('Comprimento deste trecho (m)', 'trecho', vexib(vv.trecho), { dica: desc })}
+      <span class="fc-label">Inserir neste ponto da parede</span>
+      <div class="pl-acoes g4">
+        <button class="btn btn-primary" data-acao="ins" data-v="porta">Porta</button>
+        <button class="btn btn-ghost" data-acao="ins" data-v="janela">Janela</button>
+        <button class="btn btn-ghost" data-acao="ins" data-v="ponto">Ponto</button>
+        <button class="btn btn-ghost" data-acao="ins" data-v="obj">Objeto</button>
+      </div>`;
+  }
+  if (it.tipo === 'porta') {
+    const p = info.g.p, A = ambPorId(L, p.ambA), B = p.ambB && ambPorId(L, p.ambB), jan = Planta.ehJanela(p.modelo);
+    const [rE, rD] = rotulosAte(p.parede), lados = rotulosLado(p.parede);
+    const titulo = jan ? `${nomeModelo(p.modelo)} em ${A.codigo}` : B ? `Porta ${A.codigo} ↔ ${B.codigo}` : `Porta em ${A.codigo}`;
+    let opc = '';
+    if (!jan && p.modelo !== 'vao') {
+      opc += `<div class="field"><span class="fc-label">Abre para</span>${opcoesPe('abre', p.abre, [['dentro', `Dentro de ${A.codigo}`], ['fora', B ? `Dentro de ${B.codigo}` : 'Fora']])}</div>`;
+      if (p.modelo === 'giro') opc += `<div class="field"><span class="fc-label">Dobradiça</span>${opcoesPe('lado', p.lado, [['ini', lados[0]], ['fim', lados[1]]])}</div>`;
+      if (p.modelo === 'correr') opc += `<div class="field"><span class="fc-label">Corre para</span>${opcoesPe('lado', p.lado, [['ini', lados[0]], ['fim', lados[1]]])}</div>`;
+    }
+    return `<div class="pl-sel"><div class="pl-sel-t">${h(titulo)}</div><div class="pl-sel-s">Parede ${NOMES_PAREDE[p.parede]} de ${h(A.codigo)}. Toque numa cota para editar.</div></div>
+      <div class="grid2">${campoPe(rE, 'esq', vexib(vv.esq))}${campoPe(rD, 'dir', vexib(vv.dir))}</div>
+      <div class="${jan ? 'grid3' : 'grid2'}">${campoPe('Largura (m)', 'larg', vexib(vv.larg))}${campoPe('Altura (m)', 'alt', p.altura)}${jan ? campoPe('Peitoril (m)', 'peit', p.peitoril) : ''}</div>
+      <div class="field"><span class="fc-label">Modelo</span>${opcoesPe('modelo', p.modelo, jan ? MODELOS_JANELA : MODELOS_PORTA)}</div>
+      ${opc}
+      <div class="pl-acoes g3">
+        <button class="btn btn-ghost" data-acao="pe-mais">Mais opções</button>
+        ${!jan && !B ? '<button class="btn btn-primary" data-acao="pe-vizinho">+ Ambiente ao lado</button>' : ''}
+        <button class="btn btn-ghost perigo" data-acao="pe-excluir">Excluir</button>
+      </div>`;
+  }
+  if (it.tipo === 'ponto') {
+    const pt = info.pt, a = ambPorId(L, it.amb), [rE, rD] = rotulosAte(pt.face), idT = fid();
+    return `<div class="pl-sel"><div class="pl-sel-t"><b>${h(pt.cod)}</b> ${h(pt.i.tipo)}</div><div class="pl-sel-s">Parede ${NOMES_PAREDE[pt.face]} de ${h(a.codigo)}. Cotas até o centro do ponto.</div></div>
+      <div class="grid2">${campoPe(rE, 'esq', vexib(vv.esq))}${campoPe(rD, 'dir', vexib(vv.dir))}</div>
+      <div class="field"><label for="${idT}">Tipo</label><select id="${idT}" class="input" data-pe="tipo">${Object.keys(Planta.PONTOS).map(t => `<option${t === pt.i.tipo ? ' selected' : ''}>${h(t)}</option>`).join('')}</select></div>
+      <div class="grid2">${campoPe('Altura do piso (m)', 'altura', pt.i.altura)}${campoPe('Quantidade', 'qtd', pt.i.qtd, { extra: 'inputmode="numeric"' })}</div>
+      <div class="pl-acoes g2">
+        <a class="btn btn-ghost" href="#/l/${h(L.id)}/a/${h(a.id)}">Fotos e detalhes</a>
+        <button class="btn btn-ghost perigo" data-acao="pe-excluir">Excluir</button>
+      </div>`;
+  }
+  if (it.tipo === 'obj') {
+    const ob = info.obj, o = ob.o, b = ob.b, a = ambPorId(L, it.amb);
+    const medidas = o.tipo === 'desnivel'
+      ? `<div class="grid3">${campoPe('Largura (m)', 'w', o.w || vnum(b.w))}${campoPe('Profund. (m)', 'd', o.d || vnum(b.d))}${campoPe('Nível (m)', 'nivel', o.nivel, { extra: 'placeholder="+0,17"' })}</div>
+         <p class="dica">Nível do patamar ou rebaixo, na mesma referência do nível do piso dos ambientes.</p>`
+      : `<div class="grid3">${campoPe('Largura (m)', 'w', o.w || vnum(b.w))}${campoPe('Profund. (m)', 'd', o.d || vnum(b.d))}${o.tipo === 'pilar' ? '' : campoPe('Altura (m)', 'h', o.h || vnum(b.h))}</div>`;
+    return `<div class="pl-sel"><div class="pl-sel-t">${h(b.nome)} · <b class="num">${h(a.codigo)}</b></div><div class="pl-sel-s">Cotas até as paredes. Toque numa cota para editar.</div></div>
+      <div class="grid2">${campoPe('Até a parede da esquerda', 'esq', vexib(vv.esq))}${campoPe('Até a parede da direita', 'dir', vexib(vv.dir))}</div>
+      <div class="grid2">${campoPe('Até a parede de baixo', 'baixo', vexib(vv.baixo))}${campoPe('Até a parede de cima', 'cima', vexib(vv.cima))}</div>
+      ${medidas}
+      <div class="pl-acoes g2">
+        <button class="btn btn-ghost" data-acao="pe-girar">Girar 90°</button>
+        <button class="btn btn-ghost perigo" data-acao="pe-excluir">Excluir</button>
+      </div>`;
+  }
+  return '';
+}
+
+function painelEscolha() {
+  const e = ctx.escolha;
+  if (e.tipo === 'ponto') {
+    return `<div class="pl-sel-t">Qual ponto?</div>
+      <div class="seg pl-escolha">${Object.entries(Planta.PONTOS).map(([t, [sg]]) =>
+        `<button class="chip off" data-acao="ins-ponto" data-v="${h(t)}"><b>${sg}</b>&nbsp;${h(t)}</button>`).join('')}</div>
+      <button class="btn btn-ghost" data-acao="esc-cancelar">Cancelar</button>`;
+  }
+  return `<div class="pl-sel-t">Qual objeto?</div>
+    <div class="pl-biblio">${Object.entries(Planta.BIBLIOTECA).map(([k, b]) =>
+      `<button class="bib" data-acao="ins-obj" data-v="${k}">${Planta.iconeObjeto(k)}<span>${h(b.nome)}</span></button>`).join('')}</div>
+    <button class="btn btn-ghost" data-acao="esc-cancelar">Cancelar</button>`;
+}
+
+/** Aplica a edição de um campo do painel no item selecionado. */
+function aplicarPe(k, val) {
+  const L = ctx.lev, it = ctx.item, lay = Planta.layout(L, pavAtual(L)), info = Planta.infoItem(lay, it);
+  if (!info) return;
+  const v = num(val);
+  if (it.tipo === 'porta') {
+    const p = info.g.p;
+    if (k === 'esq') { p.canto = 'ini'; p.boneca = val; }
+    else if (k === 'dir') { p.canto = 'fim'; p.boneca = val; }
+    else if (k === 'larg') p.largura = val;
+    else if (k === 'alt') p.altura = val;
+    else if (k === 'peit') p.peitoril = val;
+  } else if (it.tipo === 'ponto') {
+    const i = info.pt.i;
+    if (k === 'esq') i.pos = val;
+    else if (k === 'dir') { if (v != null) i.pos = vnum(info.F.u1 - info.F.u0 - v); }
+    else i[k] = val;
+  } else if (it.tipo === 'obj') {
+    const ob = info.obj, o = ob.o, r = lay.pos.get(it.amb);
+    if (k === 'esq' && v != null) o.x = r2(v);
+    else if (k === 'dir' && v != null) o.x = r2(r.dx - v - ob.bw);
+    else if (k === 'baixo' && v != null) o.y = r2(v);
+    else if (k === 'cima' && v != null) o.y = r2(r.dy - v - ob.bh);
+    else if (['w', 'd', 'h', 'nivel'].includes(k)) o[k] = val;
+  } else if (it.tipo === 'seg') {
+    if (v == null || v < 0) return;
+    const a = ambPorId(L, it.amb), { vE, vD, F } = info;
+    const pos = (x, canto, valor) => {
+      const p = x.g.p;
+      if (x.lado === 'A') { p.canto = canto; p.boneca = vnum(valor); } else { p.cantoB = canto; p.bonecaB = vnum(valor); }
+    };
+    if (!vE && !vD) { if (Planta.HORIZ(it.face)) a.comp = val; else a.larg = val; }
+    else if (!vE) pos(vD, 'ini', v);
+    else if (!vD) pos(vE, 'fim', v);
+    else if (vD.lado === 'A') pos(vD, 'ini', vE.ub - F.u0 + v);
+    else if (vE.lado === 'A') pos(vE, 'fim', F.u1 - vD.ua + v);
+    else return toast('Este trecho fica entre duas portas medidas no outro ambiente. Edite pelas portas.');
+  }
+  salvarDepois();
+}
+
+/** Atualiza os campos do painel que dependem do que foi editado (sem mexer no campo em uso). */
+function sincronizarPainel(ativo) {
+  const L = ctx.lev, info = Planta.infoItem(Planta.layout(L, pavAtual(L)), ctx.item);
+  if (!info) return;
+  for (const el of $$('#pl-painel [data-pe]')) {
+    if (el === ativo || !(el.dataset.pe in info.valores)) continue;
+    el.value = vexib(info.valores[el.dataset.pe]);
+  }
+}
+
+function pontoDoItem(lay, item) {
+  const info = Planta.infoItem(lay, item);
+  if (!info) return null;
+  if (item.tipo === 'porta') return [(info.g.x1 + info.g.x2) / 2, (info.g.y1 + info.g.y2) / 2];
+  if (item.tipo === 'ponto') return [info.pt.cx, info.pt.cy];
+  if (item.tipo === 'obj') return [info.obj.x0 + info.obj.bw / 2, info.obj.y0 + info.obj.bh / 2];
+  if (item.tipo === 'seg') return info.F.pt((info.u0 + info.u1) / 2);
+  return null;
+}
+
+function selecionar(item, amb) {
+  ctx.verItem = true;
+  ctx.item = item;
+  ctx.sel = amb;
+  ctx.escolha = null;
+  desenharPlanta();
+}
+
+function inserirAbertura(tipo) {
+  const L = ctx.lev, it = ctx.item, lay = Planta.layout(L, pavAtual(L)), info = Planta.infoItem(lay, it);
+  if (!info || it.tipo !== 'seg') return;
+  const modelo = tipo === 'janela' ? 'janela' : 'giro';
+  const [larg, alt, peit] = Planta.PADRAO_ABERTURA[modelo];
+  const w = num(larg);
+  const meio = it.uToque ?? (info.u0 + info.u1) / 2;
+  const u = Math.max(info.u0, Math.min(meio - w / 2, info.u1 - w));
+  const p = {
+    id: uid(), ambA: it.amb, parede: it.face, modelo, largura: larg, altura: alt, peitoril: peit, abre: 'dentro', lado: 'ini',
+    boneca: vnum(u - info.F.u0), canto: 'ini', espessura: ls.get('espessura', '0,15'), ambB: null, bonecaB: '', cantoB: 'ini',
+  };
+  L.portas.push(p);
+  salvarDepois();
+  selecionar({ tipo: 'porta', id: p.id }, it.amb);
+}
+
+function inserirPonto(tipo) {
+  const L = ctx.lev, base = ctx.escolha && ctx.escolha.base, lay = Planta.layout(L, pavAtual(L)), info = Planta.infoItem(lay, base);
+  if (!info) { ctx.escolha = null; return desenharPlanta(); }
+  const a = ambPorId(L, base.amb);
+  const u = base.uToque ?? (info.u0 + info.u1) / 2;
+  const i = { id: uid(), tipo, qtd: '1', comp: '', altura: Planta.PONTOS[tipo][1], local: '', fotos: [], parede: base.face, pos: vnum(u - info.F.u0) };
+  a.inst.push(i);
+  salvarDepois();
+  selecionar({ tipo: 'ponto', amb: a.id, id: i.id }, a.id);
+}
+
+function inserirObjeto(tipo) {
+  const L = ctx.lev, e = ctx.escolha, lay = Planta.layout(L, pavAtual(L));
+  const b = Planta.BIBLIOTECA[tipo], amb = e.base ? e.base.amb : ctx.sel, a = ambPorId(L, amb), r = lay.pos.get(amb);
+  if (!a || !r) { ctx.escolha = null; return desenharPlanta(); }
+  const o = { id: uid(), tipo, x: 0, y: 0, w: '', d: '', h: '', rot: 0, nivel: tipo === 'desnivel' ? vnum((num(a.nivel) || 0) + 0.17) : '' };
+  const info = e.base && Planta.infoItem(lay, e.base);
+  if (info) {
+    // encosta a parte de trás do objeto na parede tocada
+    const f = e.base.face;
+    o.rot = { baixo: 0, cima: 180, esq: 270, dir: 90 }[f];
+    const bw = o.rot % 180 ? b.d : b.w, bh = o.rot % 180 ? b.w : b.d;
+    const ao = Planta.HORIZ(f) ? bw : bh, len = info.F.u1 - info.F.u0;
+    const u = Math.max(0, Math.min((e.base.uToque ?? (info.u0 + info.u1) / 2) - info.F.u0 - ao / 2, len - ao));
+    if (f === 'baixo') { o.x = r2(u); o.y = 0; }
+    else if (f === 'cima') { o.x = r2(u); o.y = r2(r.dy - bh); }
+    else if (f === 'esq') { o.x = 0; o.y = r2(u); }
+    else { o.x = r2(r.dx - bw); o.y = r2(u); }
+  } else {
+    o.x = r2(Math.max(0, (r.dx - b.w) / 2));
+    o.y = r2(Math.max(0, (r.dy - b.d) / 2));
+  }
+  a.objetos.push(o);
+  salvarDepois();
+  selecionar({ tipo: 'obj', amb: a.id, id: o.id }, a.id);
+}
+
+async function excluirItem() {
+  const L = ctx.lev, it = ctx.item;
+  if (!it) return;
+  if (it.tipo === 'porta') {
+    const p = L.portas.find(x => x.id === it.id);
+    const B = p && p.ambB && ambPorId(L, p.ambB);
+    if (B && B.ancora === p.id) { alert(`Esta porta posiciona ${tituloAmb(B)}. Exclua antes esse ambiente.`); return; }
+    if (!confirm(`Excluir esta ${Planta.ehJanela(p.modelo) ? 'janela' : 'porta'}?`)) return;
+    L.portas = L.portas.filter(x => x !== p);
+  } else if (it.tipo === 'ponto') {
+    const a = ambPorId(L, it.amb), i = a.inst.find(x => x.id === it.id);
+    if (!confirm('Excluir este ponto' + (i.fotos.length ? ' e as fotos dele?' : '?'))) return;
+    await apagarFotos(i.fotos.map(f => f.id));
+    a.inst = a.inst.filter(x => x !== i);
+  } else if (it.tipo === 'obj') {
+    const a = ambPorId(L, it.amb);
+    a.objetos = a.objetos.filter(x => x.id !== it.id);
+  }
+  ctx.item = null;
+  salvarDepois();
+  desenharPlanta();
+}
+
+function girarObjeto() {
+  const L = ctx.lev, lay = Planta.layout(L, pavAtual(L)), info = Planta.infoItem(lay, ctx.item);
+  if (!info || ctx.item.tipo !== 'obj') return;
+  const ob = info.obj, o = ob.o, r = lay.pos.get(ctx.item.amb);
+  const cx = ob.x0 - r.x + ob.bw / 2, cy = ob.y0 - r.y + ob.bh / 2;   // gira em torno do centro
+  o.rot = ((+o.rot || 0) + 90) % 360;
+  o.x = r2(cx - ob.bh / 2);
+  o.y = r2(cy - ob.bw / 2);
+  salvarDepois();
+  desenharPlanta();
+}
+
+// ── Toque e gestos na planta ──
 function zoomPlanta(v, f, px, py) {
   const s2 = Math.max(4, Math.min(600, v.s * f)), k = s2 / v.s;
   v.ox = px - (px - v.ox) * k;
@@ -823,10 +1113,10 @@ function zoomPlanta(v, f, px, py) {
   v.s = s2;
 }
 
-function ligarGestos(el) {
+/** Arrastar move, dois dedos (ou a roda do mouse) aproximam; toque sem arrastar chama aoTocar. */
+function gestos(el, { mover, zoom, aoTocar }) {
   const pts = new Map();
   let ini = null, moveu = false, alvo = null, pinca = null;
-  const vista = () => ctx.views[pavAtual(ctx.lev)];
   el.addEventListener('pointerdown', e => {
     el.setPointerCapture(e.pointerId);
     pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -837,58 +1127,76 @@ function ligarGestos(el) {
     if (!pts.has(e.pointerId)) return;
     const ant = pts.get(e.pointerId), at = { x: e.clientX, y: e.clientY };
     pts.set(e.pointerId, at);
-    const v = vista();
-    if (!v) return;
     if (pts.size === 1) {
       if (!moveu && Math.hypot(at.x - ini.x, at.y - ini.y) > 6) moveu = true;
-      if (moveu) { v.ox += at.x - ant.x; v.oy += at.y - ant.y; agendarPlanta(); }
+      if (moveu) mover(at.x - ant.x, at.y - ant.y);
     } else if (pts.size === 2 && pinca) {
       const [a, b] = [...pts.values()], d = Math.hypot(a.x - b.x, a.y - b.y), r = el.getBoundingClientRect();
-      zoomPlanta(v, d / pinca, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
+      zoom(d / pinca, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
       pinca = d;
-      agendarPlanta();
     }
   });
-  const soltar = e => {
+  el.addEventListener('pointerup', e => {
     if (!pts.has(e.pointerId)) return;
     pts.delete(e.pointerId);
     if (pts.size < 2) pinca = null;
-    if (pts.size === 0) {
-      if (!moveu && alvo) tocarPlanta(alvo);
-      alvo = null;
-    }
-  };
-  el.addEventListener('pointerup', soltar);
+    if (pts.size === 0) { if (!moveu && alvo && aoTocar) aoTocar(alvo, e); alvo = null; }
+  });
   el.addEventListener('pointercancel', e => { pts.delete(e.pointerId); pinca = null; moveu = true; });
   el.addEventListener('wheel', e => {
     e.preventDefault();
-    const v = vista();
-    if (!v) return;
     const r = el.getBoundingClientRect();
-    zoomPlanta(v, e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top);
-    agendarPlanta();
+    zoom(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top);
   }, { passive: false });
 }
 
-function tocarPlanta(t) {
-  const mais = t.closest('[data-mais]'), porta = t.closest('[data-porta]'), amb = t.closest('[data-amb]');
-  if (mais) return abrirVizinho(mais.dataset.mais);
-  if (porta) return abrirPorta(porta.dataset.porta);
+function ligarGestos(el) {
+  const vista = () => ctx.views[pavAtual(ctx.lev)];
+  gestos(el, {
+    mover: (dx, dy) => { const v = vista(); if (v) { v.ox += dx; v.oy += dy; agendarPlanta(); } },
+    zoom: (f, px, py) => { const v = vista(); if (v) { zoomPlanta(v, f, px, py); agendarPlanta(); } },
+    aoTocar: tocarPlanta,
+  });
+}
+
+function tocarPlanta(t, ev) {
+  const L = ctx.lev;
+  const de = sel => t.closest(sel);
+  if (de('[data-mais]')) return abrirVizinho(de('[data-mais]').dataset.mais);
+  if (de('[data-cota]')) {
+    const inp = $(`#pl-painel [data-pe="${de('[data-cota]').dataset.cota}"]`);
+    if (inp) { inp.focus(); inp.select(); }
+    return;
+  }
+  if (de('[data-ponto]')) { const [amb, id] = de('[data-ponto]').dataset.ponto.split('|'); return selecionar({ tipo: 'ponto', amb, id }, amb); }
+  if (de('[data-porta]')) { const p = L.portas.find(x => x.id === de('[data-porta]').dataset.porta); return selecionar({ tipo: 'porta', id: p.id }, p.ambA); }
+  if (de('[data-obj]')) { const [amb, id] = de('[data-obj]').dataset.obj.split('|'); return selecionar({ tipo: 'obj', amb, id }, amb); }
+  if (de('[data-seg]')) {
+    const [amb, f, u0, u1] = de('[data-seg]').dataset.seg.split('|');
+    const lay = Planta.layout(L, pavAtual(L)), item = Planta.segmentoEm(lay, amb, f, +u0, +u1);
+    const v = ctx.views[pavAtual(L)], r = $('#planta').getBoundingClientRect();
+    const x = (ev.clientX - r.left - v.ox) / v.s, y = (v.oy - (ev.clientY - r.top)) / v.s;
+    item.uToque = Planta.HORIZ(f) ? x : y;
+    return selecionar(item, amb);
+  }
+  const amb = de('[data-amb]');
+  ctx.item = null;
+  ctx.escolha = null;
   ctx.sel = amb ? amb.dataset.amb : null;
   desenharPlanta();
 }
-window.addEventListener('resize', () => { if ($('#planta')) desenharPlanta(); if (rasc) atualizarPrevia(); });
+window.addEventListener('resize', () => { if ($('#planta')) desenharPlanta(); if (rasc) atualizarPrevia(); if (v3) desenhar3D(true); });
 
 // ── Formulários da planta (com pré-visualização) ──
 function abrirAmbiente(id) {
   const L = ctx.lev;
   if (!id) {
     const temAmb = L.ambientes.some(a => a.pavimentoId === pavAtual(L));
-    return abrirDialogo({ tipo: 'amb', id: null, pav: pavAtual(L), titulo: temAmb ? 'Ambiente sem ligação' : 'Primeiro ambiente', v: { nome: '', comp: '', larg: '' } });
+    return abrirDialogo({ tipo: 'amb', id: null, pav: pavAtual(L), titulo: temAmb ? 'Ambiente sem ligação' : 'Primeiro ambiente', v: { nome: '', comp: '', larg: '', nivel: '', peDireito: '' } });
   }
   const a = ambPorId(L, id);
   const p = a.ancora && L.portas.find(x => x.id === a.ancora && x.ambB === a.id);
-  const v = { nome: a.nome };
+  const v = { nome: a.nome, nivel: a.nivel, peDireito: a.peDireito };
   if (p) { const hz = Planta.HORIZ(p.parede); v.ladoPorta = hz ? a.comp : a.larg; v.prof = hz ? a.larg : a.comp; }
   else { v.comp = a.comp; v.larg = a.larg; }
   abrirDialogo({ tipo: 'amb', id, pav: a.pavimentoId, ancora: p ? p.id : null, titulo: `${a.codigo}: medidas`, v });
@@ -902,21 +1210,24 @@ function abrirPorta(id) {
     const parede = ['cima', 'dir', 'baixo', 'esq'].find(x => !usadas.has(x)) || 'cima';
     return abrirDialogo({
       tipo: 'porta', id: null, novoId: uid(), ambA: a.id, pav: a.pavimentoId, titulo: `Nova porta em ${a.codigo}`,
-      v: { parede, tipo: 'porta', largura: '0,80', boneca: '', canto: 'ini', espessura: ls.get('espessura', '0,15'), bonecaB: '', cantoB: 'ini' },
+      v: { parede, modelo: 'giro', abre: 'dentro', lado: 'ini', largura: '0,80', altura: '2,10', peitoril: '', boneca: '', canto: 'ini', espessura: ls.get('espessura', '0,15'), bonecaB: '', cantoB: 'ini' },
     });
   }
   const p = L.portas.find(x => x.id === id);
   const A = ambPorId(L, p.ambA), B = p.ambB && ambPorId(L, p.ambB);
   abrirDialogo({
-    tipo: 'porta', id, ambA: p.ambA, pav: A.pavimentoId, titulo: B ? `Porta ${A.codigo} ↔ ${B.codigo}` : `Porta em ${A.codigo}`,
-    v: { parede: p.parede, tipo: p.tipo || 'porta', largura: p.largura, boneca: p.boneca, canto: p.canto, espessura: p.espessura, bonecaB: p.bonecaB, cantoB: p.cantoB },
+    tipo: 'porta', id, ambA: p.ambA, pav: A.pavimentoId, titulo: B ? `Porta ${A.codigo} ↔ ${B.codigo}` : `${nomeModelo(p.modelo)} em ${A.codigo}`,
+    v: {
+      parede: p.parede, modelo: p.modelo, abre: p.abre, lado: p.lado, largura: p.largura, altura: p.altura, peitoril: p.peitoril,
+      boneca: p.boneca, canto: p.canto, espessura: p.espessura, bonecaB: p.bonecaB, cantoB: p.cantoB,
+    },
   });
 }
 function abrirVizinho(portaId) {
   const L = ctx.lev, p = L.portas.find(x => x.id === portaId);
   if (!p) return;
   const A = ambPorId(L, p.ambA);
-  abrirDialogo({ tipo: 'vizinho', portaId, novoId: uid(), pav: A.pavimentoId, titulo: `Ambiente ao lado de ${A.codigo}`, v: { nome: '', ladoPorta: '', prof: '', bonecaB: '', cantoB: 'ini' } });
+  abrirDialogo({ tipo: 'vizinho', portaId, novoId: uid(), pav: A.pavimentoId, titulo: `Ambiente ao lado de ${A.codigo}`, v: { nome: '', ladoPorta: '', prof: '', bonecaB: '', cantoB: 'ini', nivel: A.nivel || '' } });
 }
 
 function abrirDialogo(r) { rasc = r; desenharDialogo(); }
@@ -954,6 +1265,7 @@ const opcoes = (k, atual, lista) => `<div class="seg">${lista.map(([v, t]) =>
 
 function formDialogo(r) {
   const L = ctx.lev, v = r.v;
+  const niveis = `<div class="grid2">${campoR('Nível do piso (m)', 'nivel', v.nivel, { numero: true, extra: 'placeholder="±0,00"', dica: 'Use + ou − para desnível.' })}${campoR('Pé-direito (m)', 'peDireito', v.peDireito, { numero: true, extra: 'placeholder="2,80"', dica: 'Para a vista 3D.' })}</div>`;
   if (r.tipo === 'amb') {
     const medidas = r.ancora
       ? `<div class="grid2">${campoR('Parede da porta (m)', 'ladoPorta', v.ladoPorta, { numero: true })}${campoR('Profundidade (m)', 'prof', v.prof, { numero: true })}</div>`
@@ -961,25 +1273,38 @@ function formDialogo(r) {
     return `${campoR('Nome do ambiente', 'nome', v.nome, { extra: 'placeholder="Ex.: Sala de reunião" autocapitalize="sentences"' })}
       ${medidas}
       <p class="dica">Medidas internas, de parede a parede.</p>
+      ${niveis}
       ${r.id ? '<button class="btn btn-ghost perigo" data-acao="dl-excluir-amb">Excluir ambiente</button>' : ''}`;
   }
   if (r.tipo === 'porta') {
     const A = ambPorId(L, r.ambA);
     const p = r.id && L.portas.find(x => x.id === r.id);
     const B = p && p.ambB && ambPorId(L, p.ambB);
+    const jan = Planta.ehJanela(v.modelo), lados = rotulosLado(v.parede);
+    let opc = '';
+    if (!jan && v.modelo !== 'vao') {
+      opc += `<div class="field"><span class="fc-label">Abre para</span>${opcoes('abre', v.abre, [['dentro', `Dentro de ${A.codigo}`], ['fora', B ? `Dentro de ${B.codigo}` : 'Fora']])}</div>`;
+      if (v.modelo === 'giro') opc += `<div class="field"><span class="fc-label">Dobradiça</span>${opcoes('lado', v.lado, [['ini', lados[0]], ['fim', lados[1]]])}</div>`;
+      if (v.modelo === 'correr') opc += `<div class="field"><span class="fc-label">Corre para</span>${opcoes('lado', v.lado, [['ini', lados[0]], ['fim', lados[1]]])}</div>`;
+    }
     return `<div class="field"><span class="fc-label">Parede de ${h(A.codigo)}${B ? ' (mudar a parede move ' + h(B.codigo) + ')' : ''}</span>
         ${opcoes('parede', v.parede, ['cima', 'dir', 'baixo', 'esq'].map(x => [x, `${SETA[x]} ${NOMES_PAREDE[x].replace(/^d[aeo] /, '')}`]))}</div>
-      <div class="field"><span class="fc-label">Tipo</span>${opcoes('tipo', v.tipo, [['porta', 'Porta'], ['vao', 'Vão sem porta']])}</div>
+      <div class="field"><span class="fc-label">Modelo</span>${opcoes('modelo', v.modelo, B ? MODELOS_PORTA : Planta.MODELOS)}</div>
       <div class="grid2">
         ${campoR('Largura do vão (m)', 'largura', v.largura, { numero: true })}
         ${campoR('Espessura da parede (m)', 'espessura', v.espessura, { numero: true, dica: 'Medida no batente.' })}
       </div>
+      <div class="grid2">
+        ${campoR('Altura (m)', 'altura', v.altura, { numero: true })}
+        ${jan ? campoR('Peitoril (m)', 'peitoril', v.peitoril, { numero: true, dica: 'Do piso até a janela.' }) : ''}
+      </div>
       ${campoR(`Boneca em ${A.codigo} (m)`, 'boneca', v.boneca, { numero: true, dica: `Do canto da parede até o batente, medida por dentro de ${h(A.codigo)}.` })}
       ${opcoes('canto', v.canto, [['ini', rotuloCanto(v.parede, 'ini')], ['fim', rotuloCanto(v.parede, 'fim')]])}
+      ${opc}
       ${B ? `<hr class="sep">
         ${campoR(`Boneca em ${B.codigo} (m)`, 'bonecaB', v.bonecaB, { numero: true, dica: `A mesma porta, medida por dentro de ${h(B.codigo)}.` })}
         ${opcoes('cantoB', v.cantoB, [['ini', rotuloCanto(v.parede, 'ini')], ['fim', rotuloCanto(v.parede, 'fim')]])}` : ''}
-      ${r.id ? '<button class="btn btn-ghost perigo" data-acao="dl-excluir-porta">Excluir porta</button>' : ''}`;
+      ${r.id ? `<button class="btn btn-ghost perigo" data-acao="dl-excluir-porta">Excluir ${jan ? 'janela' : 'porta'}</button>` : ''}`;
   }
   // vizinho
   const p = L.portas.find(x => x.id === r.portaId), A = ambPorId(L, p.ambA);
@@ -990,7 +1315,8 @@ function formDialogo(r) {
       ${campoR('Profundidade (m)', 'prof', v.prof, { numero: true, dica: 'A outra medida.' })}
     </div>
     ${campoR('Boneca neste ambiente (m)', 'bonecaB', v.bonecaB, { numero: true, dica: 'Do canto até o batente da mesma porta, medida por dentro deste ambiente.' })}
-    ${opcoes('cantoB', v.cantoB, [['ini', rotuloCanto(p.parede, 'ini')], ['fim', rotuloCanto(p.parede, 'fim')]])}`;
+    ${opcoes('cantoB', v.cantoB, [['ini', rotuloCanto(p.parede, 'ini')], ['fim', rotuloCanto(p.parede, 'fim')]])}
+    ${campoR('Nível do piso (m)', 'nivel', v.nivel, { numero: true, extra: 'placeholder="±0,00"', dica: 'Se houver degrau na porta, informe a diferença aqui.' })}`;
 }
 
 /** Aplica o rascunho no levantamento L (o real ao salvar, ou uma cópia para a pré-visualização). */
@@ -1002,6 +1328,8 @@ function aplicar(L, r) {
       if (Planta.HORIZ(p.parede)) { a.comp = v.ladoPorta; a.larg = v.prof; } else { a.larg = v.ladoPorta; a.comp = v.prof; }
     } else { a.comp = v.comp; a.larg = v.larg; }
     a.forma = 'ret';
+    if ('nivel' in v) a.nivel = v.nivel;
+    if ('peDireito' in v) a.peDireito = v.peDireito;
   };
   if (r.tipo === 'amb') {
     let a = r.id && ambPorId(L, r.id);
@@ -1013,7 +1341,10 @@ function aplicar(L, r) {
   if (r.tipo === 'porta') {
     let p = r.id && L.portas.find(x => x.id === r.id);
     if (!p) { p = { id: r.novoId, ambA: r.ambA, ambB: null, bonecaB: '', cantoB: 'ini' }; L.portas.push(p); }
-    Object.assign(p, { parede: v.parede, tipo: v.tipo, largura: v.largura, boneca: v.boneca, canto: v.canto, espessura: v.espessura });
+    Object.assign(p, {
+      parede: v.parede, modelo: v.modelo, abre: v.abre, lado: v.lado, largura: v.largura, altura: v.altura,
+      peitoril: v.peitoril, boneca: v.boneca, canto: v.canto, espessura: v.espessura,
+    });
     if (p.ambB) { p.bonecaB = v.bonecaB; p.cantoB = v.cantoB; }
     return { portaId: p.id, ambId: p.ambA };
   }
@@ -1065,11 +1396,53 @@ async function salvarDialogo() {
   if (r.tipo === 'vizinho' && num(v.bonecaB) == null) return toast('Informe a boneca da porta neste ambiente.');
   const ref = aplicar(ctx.lev, r);
   ctx.sel = ref.ambId;
+  ctx.item = r.tipo === 'porta' ? { tipo: 'porta', id: ref.portaId } : null;
   ctx.verSel = true;
   salvarDepois();
   fecharDialogo();
   desenharPlanta();
-  if (r.tipo === 'vizinho') toast('Ambiente desenhado. Toque em + Porta para continuar a partir dele.');
+  if (r.tipo === 'vizinho') toast('Ambiente desenhado. Toque numa parede dele para continuar.');
+}
+
+// ── Vista 3D ──
+let v3 = null, modelo3d = null, corte3d = false;
+function abrir3D() {
+  const L = ctx.lev, pav = pavAtual(L), ov = $('#vista3d');
+  modelo3d = Vista3D.montar(L, pav, corte3d ? 1.2 : null);
+  if (!modelo3d.lay.pos.size) return toast('Desenhe a planta primeiro.');
+  const nomePv = (L.pavimentos.find(p => p.id === pav) || {}).nome || '';
+  ov.innerHTML = `<div class="dl-top">
+      <button class="btn btn-ghost" data-acao="fechar-3d">Fechar</button>
+      <b class="dl-tit">3D${nomePv ? ' · ' + h(nomePv) : ''}</b>
+      <button class="btn btn-ghost${corte3d ? ' ativo' : ''}" data-acao="corte-3d" aria-pressed="${corte3d}">Corte</button>
+      <button class="btn btn-ghost icone" data-acao="enq-3d" aria-label="Enquadrar">${ICONE_ENQUADRAR}</button>
+    </div>
+    <svg id="svg3d" class="planta d3" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vista 3D"></svg>
+    <p class="d3-dica">Arraste para girar · dois dedos ou a roda do mouse para aproximar</p>`;
+  ov.hidden = false;
+  document.body.classList.add('travado');
+  v3 = { az: -0.6, el: 0.62 };
+  desenhar3D(true);
+  const el = $('#svg3d');
+  gestos(el, {
+    mover: (dx, dy) => { v3.az += dx * 0.01; v3.el = Math.max(0.08, Math.min(1.5, v3.el + dy * 0.008)); desenhar3D(); },
+    zoom: f => { v3.s = Math.max(3, Math.min(800, v3.s * f)); desenhar3D(); },
+  });
+}
+function desenhar3D(enquadrar) {
+  const el = $('#svg3d');
+  if (!el || !v3) return;
+  const [W, H] = tamanhoSvg(el);
+  v3 = enquadrar ? Vista3D.enquadrar(modelo3d, v3, W, H) : Vista3D.centrar(modelo3d, v3, W, H);
+  el.innerHTML = Vista3D.svg(modelo3d, v3);
+}
+function fechar3D() {
+  const ov = $('#vista3d');
+  if (!ov || ov.hidden) return;
+  ov.hidden = true;
+  ov.innerHTML = '';
+  v3 = modelo3d = null;
+  document.body.classList.remove('travado');
 }
 
 // ───────────────────────── Fotos ─────────────────────────
@@ -1213,7 +1586,7 @@ function montarAbas(L) {
       { t: 'Piso', w: 22 }, { t: 'Parede', w: 22 }, { t: 'Forro / teto', w: 24 }, { t: 'Conservação', w: 12 },
       { t: 'Qtde fotos', w: 10, fmt: 'int' }, { t: 'Arquivos das fotos', w: 34 }, { t: 'Itens de instalação', w: 12, fmt: 'int' },
       { t: 'Pendências', w: 28 }, { t: 'Observações', w: 44 },
-      { t: 'X na planta (m)', w: 13, fmt: 'dec' }, { t: 'Y na planta (m)', w: 13, fmt: 'dec' },
+      { t: 'X na planta (m)', w: 13, fmt: 'dec' }, { t: 'Y na planta (m)', w: 13, fmt: 'dec' }, { t: 'Nível do piso (m)', w: 13, fmt: 'dec' },
     ],
     linhas: ambs.map(a => {
       const c = calc(a), ret = a.forma === 'ret', ps = posicao.get(a.id);
@@ -1225,25 +1598,29 @@ function montarAbas(L) {
         a.piso, a.parede, a.forro, a.conservacao,
         a.fotos.length, a.fotos.map(f => arq.get(f.id)).join(', '), a.inst.length,
         pendencias(a).join(', '), a.obs,
-        ps ? r2(ps.x) : null, ps ? r2(ps.y) : null,
+        ps ? r2(ps.x) : null, ps ? r2(ps.y) : null, num(a.nivel) ?? 0,
       ];
     }),
   };
 
   const nomeParede = { cima: 'De cima', baixo: 'De baixo', esq: 'Da esquerda', dir: 'Da direita' };
   const portas = {
-    nome: 'Portas', filtro: true,
+    nome: 'Portas e janelas', filtro: true,
     colunas: [
-      { t: 'Pavimento', w: 14 }, { t: 'Ambiente', w: 12 }, { t: 'Parede (na planta)', w: 16 }, { t: 'Tipo', w: 14 },
-      { t: 'Largura do vão (m)', w: 13, fmt: 'dec' }, { t: 'Espessura da parede (m)', w: 13, fmt: 'dec' },
+      { t: 'Pavimento', w: 14 }, { t: 'Ambiente', w: 12 }, { t: 'Parede (na planta)', w: 16 }, { t: 'Modelo', w: 14 },
+      { t: 'Largura do vão (m)', w: 13, fmt: 'dec' }, { t: 'Altura (m)', w: 10, fmt: 'dec' }, { t: 'Peitoril (m)', w: 10, fmt: 'dec' },
+      { t: 'Abre para', w: 14 }, { t: 'Dobradiça / corre para', w: 16 }, { t: 'Espessura da parede (m)', w: 13, fmt: 'dec' },
       { t: 'Boneca (m)', w: 11, fmt: 'dec' }, { t: 'Boneca medida', w: 20 },
       { t: 'Liga a', w: 12 }, { t: 'Boneca no outro ambiente (m)', w: 15, fmt: 'dec' }, { t: 'Boneca medida (outro)', w: 20 },
     ],
     linhas: L.portas.map(p => {
       const A = ambPorId(L, p.ambA), B = p.ambB && ambPorId(L, p.ambB);
       return [
-        nomePav(L, A.pavimentoId), A.codigo, nomeParede[p.parede], p.tipo === 'vao' ? 'Vão sem porta' : 'Porta',
-        r2(num(p.largura)), r2(num(p.espessura)), r2(num(p.boneca)), rotuloCanto(p.parede, p.canto),
+        nomePav(L, A.pavimentoId), A.codigo, nomeParede[p.parede], nomeModelo(p.modelo),
+        r2(num(p.largura)), r2(num(p.altura)), Planta.ehJanela(p.modelo) ? r2(num(p.peitoril)) : null,
+        ['giro', 'giro2', 'correr', 'correr2'].includes(p.modelo) ? (p.abre === 'fora' ? (B ? 'Dentro de ' + B.codigo : 'Fora') : 'Dentro de ' + A.codigo) : '',
+        p.modelo === 'giro' || p.modelo === 'correr' ? rotulosLado(p.parede)[p.lado === 'fim' ? 1 : 0] : '',
+        r2(num(p.espessura)), r2(num(p.boneca)), rotuloCanto(p.parede, p.canto),
         B ? B.codigo : '', B ? r2(num(p.bonecaB)) : null, B ? rotuloCanto(p.parede, p.cantoB) : '',
       ];
     }),
@@ -1255,6 +1632,7 @@ function montarAbas(L) {
       { t: 'Código do ambiente', w: 12 }, { t: 'Ambiente', w: 26 }, { t: 'Pavimento', w: 14 }, { t: 'Item', w: 7 },
       { t: 'Tipo', w: 28 }, { t: 'Quantidade', w: 11, fmt: 'int' }, { t: 'Comprimento aprox. (m)', w: 14, fmt: 'dec' },
       { t: 'Altura do piso (m)', w: 13, fmt: 'dec' }, { t: 'Localização / encaminhamento', w: 50 }, { t: 'Arquivos das fotos', w: 34 },
+      { t: 'Parede (na planta)', w: 16 }, { t: 'Posição na parede (m)', w: 14, fmt: 'dec' },
     ],
     linhas: ambs.flatMap(a => a.inst.map((it, k) => {
       const linear = LINEARES.has(it.tipo);
@@ -1262,6 +1640,24 @@ function montarAbas(L) {
         a.codigo, a.nome, nomePav(L, a.pavimentoId), `I${String(k + 1).padStart(2, '0')}`, it.tipo,
         linear ? null : num(it.qtd), linear ? r2(num(it.comp)) : null, r2(num(it.altura)), it.local,
         it.fotos.map(f => arq.get(f.id)).join(', '),
+        it.parede ? nomeParede[it.parede] : '', it.parede ? r2(num(it.pos)) : null,
+      ];
+    })),
+  };
+
+  const objetos = {
+    nome: 'Objetos', filtro: true,
+    colunas: [
+      { t: 'Pavimento', w: 14 }, { t: 'Ambiente', w: 12 }, { t: 'Objeto', w: 22 }, { t: 'Largura (m)', w: 11, fmt: 'dec' },
+      { t: 'Profundidade (m)', w: 13, fmt: 'dec' }, { t: 'Altura (m)', w: 10, fmt: 'dec' }, { t: 'Rotação (graus)', w: 12, fmt: 'int' },
+      { t: 'Da parede da esquerda (m)', w: 15, fmt: 'dec' }, { t: 'Da parede de baixo (m)', w: 15, fmt: 'dec' }, { t: 'Nível (m)', w: 10, fmt: 'dec' },
+    ],
+    linhas: ambs.flatMap(a => a.objetos.map(o => {
+      const b = Planta.BIBLIOTECA[o.tipo] || { nome: o.tipo, w: 0, d: 0, h: 0 };
+      return [
+        nomePav(L, a.pavimentoId), a.codigo, b.nome, num(o.w) ?? b.w, num(o.d) ?? b.d,
+        o.tipo === 'pilar' ? (num(a.peDireito) ?? null) : o.tipo === 'desnivel' ? null : (num(o.h) ?? b.h),
+        +o.rot || 0, num(o.x) ?? 0, num(o.y) ?? 0, o.tipo === 'desnivel' ? num(o.nivel) : null,
       ];
     })),
   };
@@ -1282,7 +1678,7 @@ function montarAbas(L) {
       ['Ambientes completos', `${L.ambientes.filter(a => !pendencias(a).length).length} de ${L.ambientes.length}`],
     ],
   };
-  return { abas: [ambientes, portas, instalacoes, resumo], plano };
+  return { abas: [ambientes, portas, instalacoes, objetos, resumo], plano };
 }
 
 function dataUrlBytes(du) {
@@ -1375,6 +1771,12 @@ async function importar(file) {
 document.addEventListener('input', e => {
   const el = e.target;
   if (el.dataset.r && rasc) { rasc.v[el.dataset.r] = el.value; atualizarPrevia(); return; }
+  if (el.dataset.pe && ctx.item) {
+    aplicarPe(el.dataset.pe, el.value);
+    agendarPlanta();
+    sincronizarPainel(el);
+    return;
+  }
   if (el.id === 'ov-leg' && ovEstado) { ovEstado.ref.legenda = el.value; salvarDepois(); return; }
   if (!el.dataset.bind || el.type === 'checkbox') return;
   const [o, k] = alvo(el.dataset.bind);
@@ -1458,7 +1860,49 @@ async function acao(nome, b) {
     case 'importar': $('#in-import').click(); break;
 
     // planta
-    case 'pl-pav': ctx.pavPlanta = id; ctx.sel = null; redesenhar(); break;
+    case 'pl-pav': ctx.pavPlanta = id; ctx.sel = null; ctx.item = null; ctx.escolha = null; redesenhar(); break;
+    case 'pl-sel-porta': { const p = L.portas.find(x => x.id === id); if (p) selecionar({ tipo: 'porta', id }, p.ambA); break; }
+    case 'pl-novo-obj': ctx.item = null; ctx.escolha = { tipo: 'obj', base: null }; desenharPlanta(); break;
+    case 'ins': {
+      const v = b.dataset.v;
+      if (v === 'porta' || v === 'janela') inserirAbertura(v);
+      else { ctx.escolha = { tipo: v, base: ctx.item }; desenharPlanta(); }
+      break;
+    }
+    case 'ins-ponto': inserirPonto(b.dataset.v); break;
+    case 'ins-obj': inserirObjeto(b.dataset.v); break;
+    case 'esc-cancelar': ctx.escolha = null; desenharPlanta(); break;
+    case 'pe-op': {
+      const p = ctx.item && ctx.item.tipo === 'porta' && L.portas.find(x => x.id === ctx.item.id);
+      if (!p) return;
+      const k = b.dataset.k, novo = b.dataset.v;
+      if (k === 'modelo' && Planta.ehJanela(novo) && Planta.ehJanela(p.modelo) && novo !== p.modelo) {
+        const [, altV, peitV] = Planta.PADRAO_ABERTURA[p.modelo], [, altN, peitN] = Planta.PADRAO_ABERTURA[novo];
+        if (num(p.altura) === num(altV)) p.altura = altN;
+        if (num(p.peitoril) === num(peitV)) p.peitoril = peitN;
+      }
+      p[k] = novo;
+      salvarDepois();
+      desenharPlanta();
+      break;
+    }
+    case 'pe-girar': girarObjeto(); break;
+    case 'pe-excluir': await excluirItem(); break;
+    case 'pe-mais': if (ctx.item && ctx.item.tipo === 'porta') abrirPorta(ctx.item.id); break;
+    case 'pe-vizinho': if (ctx.item && ctx.item.tipo === 'porta') abrirVizinho(ctx.item.id); break;
+    case 'pl-3d': abrir3D(); break;
+    case 'fechar-3d': fechar3D(); break;
+    case 'enq-3d': desenhar3D(true); break;
+    case 'corte-3d': {
+      corte3d = !corte3d;
+      const vis = v3;
+      modelo3d = Vista3D.montar(L, pavAtual(L), corte3d ? 1.2 : null);
+      b.classList.toggle('ativo', corte3d);
+      b.setAttribute('aria-pressed', corte3d);
+      v3 = vis;
+      desenhar3D();
+      break;
+    }
     case 'pl-zoom': {
       const el = $('#planta'), v = ctx.views[pavAtual(L)];
       if (el && v) { zoomPlanta(v, +b.dataset.v, el.clientWidth / 2, el.clientHeight / 2); agendarPlanta(); }
@@ -1468,10 +1912,17 @@ async function acao(nome, b) {
     case 'pl-novo-raiz': abrirAmbiente(null); break;
     case 'pl-nova-porta': abrirPorta(null); break;
     case 'pl-editar-amb': if (ctx.sel) abrirAmbiente(ctx.sel); break;
-    case 'pl-editar-porta': abrirPorta(id); break;
     case 'dl-cancelar': fecharDialogo(); break;
     case 'dl-salvar': await salvarDialogo(); break;
-    case 'dl-op': rasc.v[b.dataset.k] = b.dataset.v; desenharDialogo(); break;
+    case 'dl-op': {
+      const k = b.dataset.k, novo = b.dataset.v;
+      if (k === 'modelo' && Planta.ehJanela(novo) !== Planta.ehJanela(rasc.v.modelo)) {
+        [rasc.v.largura, rasc.v.altura, rasc.v.peitoril] = Planta.PADRAO_ABERTURA[novo];
+      }
+      rasc.v[k] = novo;
+      desenharDialogo();
+      break;
+    }
     case 'dl-excluir-amb': {
       const alvoAmb = ambPorId(L, rasc.id);
       if (alvoAmb && await excluirAmbiente(L, alvoAmb)) { fecharDialogo(); desenharPlanta(); toast('Ambiente excluído.'); }
@@ -1598,12 +2049,18 @@ if (EM_DESENVOLVIMENTO && 'serviceWorker' in navigator) {
     b.hidden = false;
     b.querySelector('button').onclick = async () => { await flush(); w.postMessage('atualizar'); };
   };
+  // Acompanha a versão nova em qualquer estágio: ela pode já estar instalada, ainda instalando
+  // (a verificação começa junto com o register, antes de o "then" rodar) ou chegar depois.
+  const acompanhar = w => {
+    if (!w) return;
+    const ver = () => { if (w.state === 'installed' && navigator.serviceWorker.controller) avisar(w); };
+    ver();
+    w.addEventListener('statechange', ver);
+  };
   navigator.serviceWorker.register('sw.js').then(reg => {
-    if (reg.waiting && tinhaControle) avisar(reg.waiting);
-    reg.addEventListener('updatefound', () => {
-      const w = reg.installing;
-      if (w) w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) avisar(w); });
-    });
+    acompanhar(reg.waiting);
+    acompanhar(reg.installing);
+    reg.addEventListener('updatefound', () => acompanhar(reg.installing));
   }).catch(err => console.warn('Sem modo offline:', err));
   let recarregando = false;
   navigator.serviceWorker.addEventListener('controllerchange', async () => {
