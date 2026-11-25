@@ -2,31 +2,34 @@
    planta.js: geometria, desenho (SVG) e exportação DXF da planta baixa.
    Núcleo BIM · Ferreira Costa · Melqui Domingos
 
-   Como a planta se monta
-   ─────────────────────
-   Cada ambiente é um retângulo com medidas internas: comp (↔, eixo X) e
-   larg (↕, eixo Y). O primeiro ambiente do pavimento fica na origem.
-   Os outros são posicionados pela PORTA que os liga a um ambiente já desenhado:
+   Ambientes
+   ─────────
+   Cada ambiente é um polígono de paredes internas, percorrido no sentido
+   anti-horário (o interior fica à esquerda de cada parede). Os cantos recebem
+   letras: A, B, C… A parede k vai do canto k ao canto k+1.
 
-     abertura = { ambA, parede, modelo, largura, altura, peitoril, boneca, canto,
-                  espessura, abre, lado, ambB, bonecaB, cantoB }
+   - forma 'ret': retângulo comp (parede A–B) × larg (parede B–C).
+   - forma 'poli': a.paredes = [{c, ang}]: comprimento de cada parede e, a partir
+     da segunda, o ângulo interno no canto onde ela começa (90 = esquadro,
+     270 = canto de um "L"). A última parede fecha o polígono e é calculada.
+     Enquanto a.desenhando é verdadeiro o polígono fica aberto.
 
-   - parede: em qual parede do ambiente A está a abertura (cima, baixo, esq, dir),
-     do jeito que aparece na tela.
-   - modelo: giro, giro2, correr, correr2, vao (portas) ou janela, janela_alta.
-     Só porta liga ambientes; janela fica na parede, sem o "+" do vizinho.
-   - boneca: distância do canto até o batente, medida dentro de A.
-     canto 'ini' = canto esquerdo (paredes de cima/baixo) ou de baixo
-     (paredes da esquerda/direita); 'fim' = o canto oposto.
-   - abre: 'dentro' (folha gira ou corre dentro de A) ou 'fora'.
-   - lado: dobradiça (giro) ou sentido em que a folha corre (correr): 'ini' ou 'fim'.
-   - espessura: espessura da parede, medida no vão.
-   - bonecaB / cantoB: a mesma porta, medida dentro do ambiente B.
+   No sistema do ambiente o canto A está na origem e a parede A–B segue o eixo X.
+   Na planta, cada ambiente tem uma posição e uma rotação:
+   - o primeiro (e os desenhados soltos) usam a.pos = {x, y} e a.rot (graus);
+   - os outros são posicionados pela PORTA que os liga a um ambiente já desenhado:
 
-   Dentro de cada ambiente também ficam os pontos de instalação na parede
-   (a.inst com parede e pos) e os objetos (a.objetos: mobiliário, louças,
-   pilar, escada, patamar/desnível), com posição a partir do canto de baixo à
-   esquerda do ambiente.
+     abertura = { ambA, parede (índice), modelo, largura, altura, peitoril,
+                  boneca, canto, espessura, abre, lado, ambB, paredeB, bonecaB, cantoB }
+
+     A parede paredeB de B fica encostada na parede de A (sentido oposto), do
+     outro lado da espessura, com a porta no mesmo lugar nas duas.
+     boneca: do canto até o batente; canto 'ini' = canto onde a parede começa,
+     'fim' = canto onde termina.
+
+   Dentro de cada ambiente ficam os pontos de instalação na parede (a.inst com
+   parede e pos a partir do canto inicial) e os objetos (a.objetos com centro
+   cx, cy no sistema do ambiente e rotação rot em graus).
 
    As posições não são guardadas: são recalculadas a cada desenho. Corrigir
    uma medida reposiciona tudo o que depende dela.
@@ -44,9 +47,17 @@
   const fmt = (n, d = 2) => n == null ? '–' : n.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmtNivel = n => (n > 0.0005 ? '+' : n < -0.0005 ? '' : '±') + fmt(n || 0);
+  const RAD = Math.PI / 180;
+  const letra = k => k < 26 ? String.fromCharCode(65 + k) : 'A' + String.fromCharCode(65 + k - 26);
 
-  const OPOSTA = { cima: 'baixo', baixo: 'cima', esq: 'dir', dir: 'esq' };
-  const HORIZ = p => p === 'cima' || p === 'baixo';
+  // vetores
+  const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
+  const mul = (a, k) => [a[0] * k, a[1] * k];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
+  const len = a => Math.hypot(a[0], a[1]);
+  const rotv = (a, r) => [a[0] * Math.cos(r) - a[1] * Math.sin(r), a[0] * Math.sin(r) + a[1] * Math.cos(r)];
+
   const ESPESSURA_PADRAO = 0.15;
   const PD_PADRAO = 2.8;
 
@@ -73,7 +84,7 @@
 
   /**
    * Biblioteca de objetos. Medidas em metros (largura w, profundidade d, altura h).
-   * O desenho é feito no sistema do objeto: u ao longo da largura, v da parte de trás (v = 0,
+   * Desenho no sistema do objeto: u ao longo da largura, v da parte de trás (v = 0,
    * o lado encostado na parede) para a frente. Primitivas:
    *   ['r', u0, v0, u1, v1] retângulo · ['f', ...] retângulo cheio · ['rd', ...] retângulo tracejado
    *   ['l', u0, v0, u1, v1] linha · ['c', u, v, raio] círculo · ['e', u, v, ru, rv] elipse · ['t', u, v, texto]
@@ -108,18 +119,82 @@
 
   const nivelDe = a => num(a && a.nivel) || 0;
   const pdDe = a => num(a && a.peDireito) || PD_PADRAO;
-  const dims = a => ({ dx: num(a.comp) || 0, dy: num(a.larg) || 0 });
-  /** Distância do início da parede (esquerda ou baixo) até o batente. */
-  const canon = (len, b, w, canto) => canto === 'fim' ? len - b - w : b;
+  /** Distância do canto inicial da parede até o batente mais próximo dele. */
+  const canon = (L, b, w, canto) => canto === 'fim' ? L - b - w : b;
 
-  /** Face interna de um ambiente: eixo, início e fim ao longo dele, coordenada fixa e normal para dentro. */
-  function face(r, f) {
-    const h = HORIZ(f);
+  // ───────────────────────── Forma de cada ambiente ─────────────────────────
+  /**
+   * Polígono no sistema do ambiente. Devolve {verts, fechado, paredesInfo}.
+   * Para 'poli', a parede k (k ≥ 1) gira em relação à anterior: rumo += 180 − ângulo interno.
+   */
+  function formaLocal(a) {
+    if (a.forma === 'poli') {
+      const ps = Array.isArray(a.paredes) ? a.paredes : [];
+      const verts = [[0, 0]];
+      // sentido em que os cantos foram marcados: anti-horário (interior à esquerda) ou horário
+      const sentido = a.sentido === 'horario' ? -1 : 1;
+      let rumo = 0;
+      ps.forEach((p, k) => {
+        if (k > 0) rumo += sentido * (180 - (num(p.ang) ?? 90)) * RAD;
+        const c = num(p.c) || 0;
+        const u = verts[verts.length - 1];
+        verts.push([u[0] + c * Math.cos(rumo), u[1] + c * Math.sin(rumo)]);
+      });
+      const fechado = !a.desenhando && ps.length >= 2;
+      // a parede de fechamento (do último canto ao A) não é guardada; se o último canto caiu
+      // em cima do A (todas as paredes digitadas), ele é o próprio A
+      if (fechado && verts.length > 3 && len(sub(verts[verts.length - 1], verts[0])) < 0.01) verts.pop();
+      return { verts, fechado, rumoFinal: rumo, sentido };
+    }
+    const dx = num(a.comp) || 0, dy = num(a.larg) || 0;
+    return { verts: [[0, 0], [dx, 0], [dx, dy], [0, dy]], fechado: true, rumoFinal: Math.PI, sentido: 1 };
+  }
+
+  /** Área (fórmula do polígono) e perímetro de um ambiente fechado. */
+  function areaPerimetro(a) {
+    const { verts, fechado } = formaLocal(a);
+    if (!fechado || verts.length < 3) return { area: null, perim: null };
+    let ar = 0, pe = 0;
+    verts.forEach((p, i) => { const q = verts[(i + 1) % verts.length]; ar += p[0] * q[1] - q[0] * p[1]; pe += len(sub(q, p)); });
+    return { area: Math.abs(ar) / 2, perim: pe };
+  }
+
+  /** Paredes (no mundo) a partir dos cantos já transformados. */
+  function paredesDe(verts, fechado, sentido = 1) {
+    const n = verts.length, out = [];
+    const total = fechado ? n : n - 1;
+    // o interior fica à esquerda se o polígono for anti-horário; à direita se horário
+    let esq = sentido > 0;
+    if (fechado && n >= 3) {
+      let ar = 0;
+      verts.forEach((p, i) => { const q = verts[(i + 1) % n]; ar += p[0] * q[1] - q[0] * p[1]; });
+      if (Math.abs(ar) > 1e-9) esq = ar > 0;
+    }
+    for (let k = 0; k < total; k++) {
+      const a = verts[k], b = verts[(k + 1) % n], v = sub(b, a), L = len(v) || 1e-9;
+      const d = [v[0] / L, v[1] / L], l = [-d[1], d[0]];
+      out.push({ k, a, b, len: len(v), d, nIn: esq ? l : mul(l, -1), nOut: esq ? mul(l, -1) : l });
+    }
+    return out;
+  }
+  const ptW = (W, s, off = 0) => [W.a[0] + W.d[0] * s + W.nIn[0] * off, W.a[1] + W.d[1] * s + W.nIn[1] * off];
+
+  /** Coloca o ambiente na planta: rotação r (rad) e posição t do canto A. */
+  function colocar(a, r, t) {
+    const f = formaLocal(a);
+    const verts = f.verts.map(p => add(rotv(p, r), t));
+    const walls = paredesDe(verts, f.fechado, f.sentido);
+    const xs = verts.map(p => p[0]), ys = verts.map(p => p[1]);
+    let cx = 0, cy = 0;
+    verts.forEach(p => { cx += p[0]; cy += p[1]; });
+    const ap = areaPerimetro(a);
     return {
-      h, u0: h ? r.x : r.y, u1: h ? r.x + r.dx : r.y + r.dy,
-      fixo: f === 'baixo' ? r.y : f === 'cima' ? r.y + r.dy : f === 'esq' ? r.x : r.x + r.dx,
-      ix: f === 'esq' ? 1 : f === 'dir' ? -1 : 0, iy: f === 'baixo' ? 1 : f === 'cima' ? -1 : 0,
-      pt(u, off = 0) { return h ? [u, this.fixo + this.iy * off] : [this.fixo + this.ix * off, u]; },
+      id: a.id, a, rot: r, t, verts, walls, fechado: f.fechado, local: f,
+      nivel: nivelDe(a), pd: pdDe(a), area: ap.area, perim: ap.perim,
+      centro: verts.length ? [cx / verts.length, cy / verts.length] : t,
+      bbox: { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) },
+      paraMundo: p => add(rotv(p, r), t),
+      paraLocal: p => rotv(sub(p, t), -r),
     };
   }
 
@@ -132,112 +207,106 @@
     const ligadaPor = new Map();
     const posiciona = p => !ehJanela(p.modelo);
     const raizes = ambs.filter(a => !portas.some(p => p.id === a.ancora && p.ambB === a.id && posiciona(p)));
-    const info = a => ({ ...dims(a), nivel: nivelDe(a), pd: pdDe(a) });
-    let cursor = 0;
+    let cursor = null;
 
-    for (const r of raizes) {
-      if (pos.has(r.id)) continue;
-      pos.set(r.id, { x: cursor, y: 0, ...info(r) });
-      const fila = [r.id];
+    const espalhar = id => {
+      const fila = [id];
       while (fila.length) {
-        const id = fila.shift();
-        const A = pos.get(id);
+        const A = pos.get(fila.shift());
         for (const p of portas) {
-          if (p.ambA !== id || !p.ambB || pos.has(p.ambB) || !posiciona(p)) continue;
+          if (p.ambA !== A.id || !p.ambB || pos.has(p.ambB) || !posiciona(p)) continue;
           const B = porId.get(p.ambB);
-          if (!B || B.ancora !== p.id) continue;
-          const bd = info(B);
-          const w = num(p.largura) || 0;
-          const t = num(p.espessura) ?? ESPESSURA_PADRAO;
-          const h = HORIZ(p.parede);
-          const cA = canon(h ? A.dx : A.dy, num(p.boneca) || 0, w, p.canto);
-          const cB = canon(h ? bd.dx : bd.dy, num(p.bonecaB) || 0, w, p.cantoB);
-          let x, y;
-          if (p.parede === 'cima') { y = A.y + A.dy + t; x = A.x + cA - cB; }
-          else if (p.parede === 'baixo') { y = A.y - t - bd.dy; x = A.x + cA - cB; }
-          else if (p.parede === 'dir') { x = A.x + A.dx + t; y = A.y + cA - cB; }
-          else { x = A.x - t - bd.dx; y = A.y + cA - cB; }
-          pos.set(B.id, { x, y, ...bd });
+          const WA = A.walls[+p.parede];
+          if (!B || B.ancora !== p.id || !WA) continue;
+          const fB = formaLocal(B), wB = paredesDe(fB.verts, fB.fechado, fB.sentido)[+p.paredeB || 0];
+          if (!wB) continue;
+          const w = num(p.largura) || 0, t = num(p.espessura) ?? ESPESSURA_PADRAO;
+          const cA = canon(WA.len, num(p.boneca) || 0, w, p.canto);
+          const cB = canon(wB.len, num(p.bonecaB) || 0, w, p.cantoB);
+          // gira B para que o interior dele fique do lado de fora da parede de A
+          const r = Math.atan2(WA.nOut[1], WA.nOut[0]) - Math.atan2(wB.nIn[1], wB.nIn[0]);
+          const dB = rotv(wB.d, r);
+          // o batente de A (do outro lado da espessura) que fica no início da parede de B
+          const Q = add(ptW(WA, dot(dB, WA.d) < 0 ? cA + w : cA), mul(WA.nOut, t));
+          const inicioB = sub(Q, mul(dB, cB));                         // canto inicial da parede de B no mundo
+          const tB = sub(inicioB, rotv(wB.a, r));
+          pos.set(B.id, colocar(B, r, tB));
           ligadaPor.set(B.id, p.id);
           fila.push(B.id);
         }
       }
+    };
+
+    for (const r of raizes) {
+      if (pos.has(r.id)) continue;
+      let R;
+      if (r.pos && num(r.pos.x) != null) R = colocar(r, (num(r.rot) || 0) * RAD, [num(r.pos.x), num(r.pos.y) || 0]);
+      else {
+        const prov = colocar(r, (num(r.rot) || 0) * RAD, [0, 0]);
+        const x = cursor == null ? 0 : cursor - prov.bbox.x0;
+        R = colocar(r, (num(r.rot) || 0) * RAD, [x, 0]);
+      }
+      pos.set(r.id, R);
+      espalhar(r.id);
       cursor = caixa([...pos.values()]).x1 + 2;
     }
 
-    const geo = portas.filter(p => pos.has(p.ambA)).map(p => {
-      const A = pos.get(p.ambA);
-      const w = num(p.largura) || 0;
-      const t = num(p.espessura) ?? ESPESSURA_PADRAO;
-      const h = HORIZ(p.parede);
-      const len = h ? A.dx : A.dy;
-      const c = canon(len, num(p.boneca) || 0, w, p.canto);
-      let x1, y1, x2, y2, nx, ny;
-      if (p.parede === 'cima') { x1 = A.x + c; x2 = x1 + w; y1 = y2 = A.y + A.dy; nx = 0; ny = 1; }
-      else if (p.parede === 'baixo') { x1 = A.x + c; x2 = x1 + w; y1 = y2 = A.y; nx = 0; ny = -1; }
-      else if (p.parede === 'dir') { y1 = A.y + c; y2 = y1 + w; x1 = x2 = A.x + A.dx; nx = 1; ny = 0; }
-      else { y1 = A.y + c; y2 = y1 + w; x1 = x2 = A.x; nx = -1; ny = 0; }
+    const geo = portas.filter(p => pos.has(p.ambA) && pos.get(p.ambA).walls[+p.parede]).map(p => {
+      const A = pos.get(p.ambA), W = A.walls[+p.parede];
+      const w = num(p.largura) || 0, t = num(p.espessura) ?? ESPESSURA_PADRAO;
+      const c = canon(W.len, num(p.boneca) || 0, w, p.canto);
+      const P1 = ptW(W, c), P2 = ptW(W, c + w);
       const ligada = !!(p.ambB && ligadaPor.get(p.ambB) === p.id);
-      let foraB = false;
+      let foraB = false, cB = null, WB = null;
       if (ligada) {
-        const B = pos.get(p.ambB);
-        const lenB = h ? B.dx : B.dy;
-        const cB = (h ? x1 - B.x : y1 - B.y);
-        foraB = cB < -0.005 || cB + w > lenB + 0.005;
+        WB = pos.get(p.ambB).walls[+p.paredeB || 0];
+        cB = canon(WB.len, num(p.bonecaB) || 0, w, p.cantoB);
+        foraB = cB < -0.005 || cB + w > WB.len + 0.005;
       }
       const g = {
-        p, x1, y1, x2, y2, nx, ny, t, w, c, len, ligada, janela: ehJanela(p.modelo),
-        corta: p.modelo !== 'janela_alta', fora: c < -0.005 || c + w > len + 0.005, foraB,
-        ua: h ? x1 : y1, ub: h ? x2 : y2,
+        p, W, x1: P1[0], y1: P1[1], x2: P2[0], y2: P2[1], nx: W.nOut[0], ny: W.nOut[1], t, w, c, len: W.len,
+        ligada, WB, cB, janela: ehJanela(p.modelo), corta: p.modelo !== 'janela_alta',
+        fora: c < -0.005 || c + w > W.len + 0.005, foraB,
       };
       g.prims = primitivasAbertura(g);
       return g;
     });
 
-    // pontos de instalação na parede
-    const pontos = [];
-    const objetos = [];
+    const pontos = [], objetos = [];
     for (const a of ambs) {
-      const r = pos.get(a.id);
-      if (!r) continue;
+      const R = pos.get(a.id);
+      if (!R) continue;
       for (const i of a.inst || []) {
-        if (!i.parede || num(i.pos) == null) continue;
-        const F = face(r, i.parede);
-        const u = F.u0 + num(i.pos);
-        const [px, py] = F.pt(u);
-        const [cx, cy] = F.pt(u, 0.17);
-        pontos.push({ i, amb: a.id, face: i.parede, u, px, py, cx, cy, F, len: F.u1 - F.u0, cod: (PONTOS[i.tipo] || ['?'])[0] });
+        const W = R.walls[+i.parede];
+        if (i.parede === '' || i.parede == null || !W || num(i.pos) == null) continue;
+        const s = num(i.pos);
+        const P = ptW(W, s), C = ptW(W, s, 0.17);
+        pontos.push({ i, amb: a.id, W, s, px: P[0], py: P[1], cx: C[0], cy: C[1], len: W.len, cod: (PONTOS[i.tipo] || ['?'])[0] });
       }
       for (const o of a.objetos || []) {
         const b = BIBLIOTECA[o.tipo];
         if (!b) continue;
-        const w = num(o.w) || b.w, d = num(o.d) || b.d, rot = ((+o.rot || 0) % 360 + 360) % 360;
-        const bw = rot % 180 ? d : w, bh = rot % 180 ? w : d;
-        const x0 = r.x + (num(o.x) || 0), y0 = r.y + (num(o.y) || 0);
-        const tr = (u, v) => {
-          const [X, Y] = rot === 90 ? [d - v, u] : rot === 180 ? [w - u, d - v] : rot === 270 ? [v, w - u] : [u, v];
-          return [x0 + X, y0 + Y];
-        };
+        const w = num(o.w) || b.w, d = num(o.d) || b.d, rot = (num(o.rot) || 0) * RAD;
+        const c = [num(o.cx) || 0, num(o.cy) || 0];
+        // objeto: (u, v) → ambiente (centro + rotação) → planta
+        const tr = (u, v) => R.paraMundo(add(c, rotv([u - w / 2, v - d / 2], rot)));
         const prims = [];
         for (const s of b.s(w, d)) {
-          if (s[0] === 'r' || s[0] === 'f' || s[0] === 'rd') {
-            prims.push({ t: s[0] === 'r' ? 'p' : s[0] === 'f' ? 'pf' : 'pd', pts: [tr(s[1], s[2]), tr(s[3], s[2]), tr(s[3], s[4]), tr(s[1], s[4])] });
-          } else if (s[0] === 'l') {
-            prims.push({ t: 'l', pts: [tr(s[1], s[2]), tr(s[3], s[4])] });
-          } else if (s[0] === 'c') {
-            const [cx, cy] = tr(s[1], s[2]);
-            prims.push({ t: 'c', cx, cy, r: s[3] });
-          } else if (s[0] === 'e') {
+          if (s[0] === 'r' || s[0] === 'f' || s[0] === 'rd') prims.push({ t: s[0] === 'r' ? 'p' : s[0] === 'f' ? 'pf' : 'pd', pts: [tr(s[1], s[2]), tr(s[3], s[2]), tr(s[3], s[4]), tr(s[1], s[4])] });
+          else if (s[0] === 'l') prims.push({ t: 'l', pts: [tr(s[1], s[2]), tr(s[3], s[4])] });
+          else if (s[0] === 'c') { const [x, y] = tr(s[1], s[2]); prims.push({ t: 'c', cx: x, cy: y, r: s[3] }); }
+          else if (s[0] === 'e') {
             const pts = [];
             for (let k = 0; k < 24; k++) { const an = k / 24 * 2 * Math.PI; pts.push(tr(s[1] + s[3] * Math.cos(an), s[2] + s[4] * Math.sin(an))); }
             prims.push({ t: 'p', pts });
-          } else if (s[0] === 't') {
-            const [cx, cy] = tr(s[1], s[2]);
-            prims.push({ t: 't', cx, cy, txt: s[3] });
-          }
+          } else if (s[0] === 't') { const [x, y] = tr(s[1], s[2]); prims.push({ t: 't', cx: x, cy: y, txt: s[3] }); }
         }
-        const h = o.tipo === 'pilar' ? r.pd : (num(o.h) ?? b.h);
-        objetos.push({ o, amb: a.id, b, x0, y0, bw, bh, w, d, rot, prims, h, nivel: o.tipo === 'desnivel' ? (num(o.nivel) ?? r.nivel) : r.nivel });
+        const contorno = [tr(0, 0), tr(w, 0), tr(w, d), tr(0, d)];
+        const h = o.tipo === 'pilar' ? R.pd : (num(o.h) ?? b.h);
+        objetos.push({
+          o, amb: a.id, b, w, d, rot, centroLocal: c, centro: R.paraMundo(c), contorno, prims, h,
+          nivel: o.tipo === 'desnivel' ? (num(o.nivel) ?? R.nivel) : R.nivel,
+        });
       }
     }
     return { pos, portas: geo, pontos, objetos };
@@ -246,8 +315,8 @@
   function caixa(rs) {
     if (!rs.length) return { x0: 0, y0: 0, x1: 0, y1: 0 };
     return {
-      x0: Math.min(...rs.map(r => r.x)), y0: Math.min(...rs.map(r => r.y)),
-      x1: Math.max(...rs.map(r => r.x + r.dx)), y1: Math.max(...rs.map(r => r.y + r.dy)),
+      x0: Math.min(...rs.map(r => r.bbox.x0)), y0: Math.min(...rs.map(r => r.bbox.y0)),
+      x1: Math.max(...rs.map(r => r.bbox.x1)), y1: Math.max(...rs.map(r => r.bbox.y1)),
     };
   }
 
@@ -262,74 +331,74 @@
     const P1 = [g.x1, g.y1], P2 = [g.x2, g.y2];
     const em = (P, d) => [P[0] + nx * d, P[1] + ny * d];
     const ao = (P, k) => [P[0] + (P2[0] - P1[0]) / (w || 1) * k, P[1] + (P2[1] - P1[1]) / (w || 1) * k];
-    const s = p.abre === 'fora' ? 1 : -1;           // lado da folha em relação à normal (para fora de A)
-    const f0 = p.abre === 'fora' ? t : 0;           // face onde fica a dobradiça
+    const s = p.abre === 'fora' ? 1 : -1;
+    const f0 = p.abre === 'fora' ? t : 0;
     const out = [];
-    const L = (a, b, tp = 'l') => out.push({ t: tp, pts: [a, b] });
-    const A = (c, de, ate, r) => out.push({ t: 'a', cx: c[0], cy: c[1], r, de, ate });
+    const Ln = (a, b, tp = 'l') => out.push({ t: tp, pts: [a, b] });
+    const Ar = (c, de, ate, r) => out.push({ t: 'a', cx: c[0], cy: c[1], r, de, ate });
     const m = p.modelo || 'giro';
     if (w <= 0) return out;
     if (m === 'giro') {
       const H = em(p.lado === 'fim' ? P2 : P1, f0), J = em(p.lado === 'fim' ? P1 : P2, f0);
       const E = em(H, s * w);
-      L(H, E);
-      A(H, E, J, w);
+      Ln(H, E);
+      Ar(H, E, J, w);
     } else if (m === 'giro2') {
       const H1 = em(P1, f0), H2 = em(P2, f0), M = em(ao(P1, w / 2), f0);
       const E1 = em(H1, s * w / 2), E2 = em(H2, s * w / 2);
-      L(H1, E1); A(H1, E1, M, w / 2);
-      L(H2, E2); A(H2, E2, M, w / 2);
+      Ln(H1, E1); Ar(H1, E1, M, w / 2);
+      Ln(H2, E2); Ar(H2, E2, M, w / 2);
     } else if (m === 'correr' || m === 'correr2') {
       const seta = (de, ate) => {
-        L(de, ate);
+        Ln(de, ate);
         const dx = ate[0] - de[0], dy = ate[1] - de[1], n = Math.hypot(dx, dy) || 1, ux = dx / n, uy = dy / n, k = 0.08;
-        L(ate, [ate[0] - ux * k + uy * k * 0.6, ate[1] - uy * k - ux * k * 0.6]);
-        L(ate, [ate[0] - ux * k - uy * k * 0.6, ate[1] - uy * k + ux * k * 0.6]);
+        Ln(ate, [ate[0] - ux * k + uy * k * 0.6, ate[1] - uy * k - ux * k * 0.6]);
+        Ln(ate, [ate[0] - ux * k - uy * k * 0.6, ate[1] - uy * k + ux * k * 0.6]);
       };
       if (m === 'correr') {
         const o = f0 + s * 0.05;
-        L(em(P1, o), em(P2, o), 'lf');
+        Ln(em(P1, o), em(P2, o), 'lf');
         const ida = p.lado === 'fim' ? 1 : -1, M = ao(P1, w / 2);
         seta(em(ao(M, -ida * w * 0.2), o + s * 0.12), em(ao(M, ida * w * 0.2), o + s * 0.12));
       } else {
         const o1 = f0 + s * 0.04, o2 = f0 + s * 0.1;
-        L(em(P1, o1), em(ao(P1, w / 2 + 0.05), o1), 'lf');
-        L(em(ao(P1, w / 2 - 0.05), o2), em(P2, o2), 'lf');
+        Ln(em(P1, o1), em(ao(P1, w / 2 + 0.05), o1), 'lf');
+        Ln(em(ao(P1, w / 2 - 0.05), o2), em(P2, o2), 'lf');
         seta(em(ao(P1, w * 0.35), o2 + s * 0.12), em(ao(P1, w * 0.12), o2 + s * 0.12));
         seta(em(ao(P1, w * 0.65), o2 + s * 0.12), em(ao(P1, w * 0.88), o2 + s * 0.12));
       }
     } else if (m === 'janela') {
-      L(em(P1, t * 0.35), em(P2, t * 0.35));
-      L(em(P1, t * 0.65), em(P2, t * 0.65));
+      Ln(em(P1, t * 0.35), em(P2, t * 0.35));
+      Ln(em(P1, t * 0.65), em(P2, t * 0.65));
     } else if (m === 'janela_alta') {
-      L(em(P1, t * 0.5), em(P2, t * 0.5), 'ld');
-      L(em(P1, -0.05), em(P1, t + 0.05), 'ld');
-      L(em(P2, -0.05), em(P2, t + 0.05), 'ld');
+      Ln(em(P1, t * 0.5), em(P2, t * 0.5), 'ld');
+      Ln(em(P1, -0.05), em(P1, t + 0.05), 'ld');
+      Ln(em(P2, -0.05), em(P2, t + 0.05), 'ld');
     }
     return out;
   }
 
   // ───────────────────────── Linhas do desenho ─────────────────────────
-  /** Aberturas que cortam a parede de um ambiente numa face, em coordenadas do eixo. */
-  function vaosDaFace(lay, amb, f) {
-    return lay.portas.filter(g => g.corta && ((g.p.ambA === amb && g.p.parede === f) || (g.ligada && g.p.ambB === amb && OPOSTA[g.p.parede] === f)))
-      .map(g => ({ g, ua: Math.min(g.ua, g.ub), ub: Math.max(g.ua, g.ub), lado: g.p.ambA === amb ? 'A' : 'B' }))
-      .sort((a, b) => a.ua - b.ua);
+  /** Aberturas que cortam uma parede de um ambiente, em distância a partir do canto inicial dela. */
+  function vaosDaParede(lay, amb, k, todas = false) {
+    const out = [];
+    for (const g of lay.portas) {
+      if (!todas && !g.corta) continue;
+      if (g.p.ambA === amb && +g.p.parede === k) out.push({ g, ua: g.c, ub: g.c + g.w, lado: 'A' });
+      else if (g.ligada && g.p.ambB === amb && (+g.p.paredeB || 0) === k) out.push({ g, ua: g.cB, ub: g.cB + g.w, lado: 'B' });
+    }
+    return out.sort((a, b) => a.ua - b.ua);
   }
 
-  /** Paredes com os vãos recortados ([x1,y1,x2,y2,amb,face,u0,u1]), batentes e símbolos. Tudo em metros. */
+  /** Paredes com os vãos recortados ([x1,y1,x2,y2,amb,k,s0,s1]), batentes e símbolos. Tudo em metros. */
   function linhas(lay) {
     const paredes = [];
-    for (const [id, r] of lay.pos) {
-      for (const f of ['baixo', 'cima', 'esq', 'dir']) {
-        const F = face(r, f);
-        let u = F.u0;
-        const seg = (a, b) => { if (b - a > 0.0005) paredes.push([...F.pt(a), ...F.pt(b), id, f, a, b]); };
-        for (const v of vaosDaFace(lay, id, f)) {
-          seg(u, Math.min(v.ua, F.u1));
-          u = Math.max(u, v.ub);
-        }
-        seg(u, F.u1);
+    for (const [id, R] of lay.pos) {
+      for (const W of R.walls) {
+        let s = 0;
+        const seg = (a, b) => { if (b - a > 0.0005) paredes.push([...ptW(W, a), ...ptW(W, b), id, W.k, a, b]); };
+        for (const v of vaosDaParede(lay, id, W.k)) { seg(s, Math.min(v.ua, W.len)); s = Math.max(s, v.ub); }
+        seg(s, W.len);
       }
     }
     const batentes = [], simbolos = [];
@@ -344,16 +413,45 @@
   }
 
   // ───────────────────────── Conferência ─────────────────────────
+  function dentro(pt, poli) {
+    let c = false;
+    for (let i = 0, j = poli.length - 1; i < poli.length; j = i++) {
+      const a = poli[i], b = poli[j];
+      if ((a[1] > pt[1]) !== (b[1] > pt[1]) && pt[0] < (b[0] - a[0]) * (pt[1] - a[1]) / (b[1] - a[1]) + a[0]) c = !c;
+    }
+    return c;
+  }
+  /** Polígono encolhido 2 cm para dentro (para não acusar ambientes só encostados). */
+  function encolher(R, m = 0.02) {
+    return R.verts.map((p, i) => {
+      const W1 = R.walls[(i - 1 + R.walls.length) % R.walls.length], W2 = R.walls[i];
+      if (!W1 || !W2) return p;
+      const n = add(W1.nIn, W2.nIn), L = len(n) || 1;
+      return add(p, mul(n, m / L * 1.4));
+    });
+  }
+  const cruzam = (p1, p2, q1, q2) => {
+    const o = (a, b, c) => Math.sign((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]));
+    return o(p1, p2, q1) * o(p1, p2, q2) < 0 && o(q1, q2, p1) * o(q1, q2, p2) < 0;
+  };
+  function sobrepoe(A, B) {
+    if (!A.fechado || !B.fechado) return false;
+    if (A.bbox.x1 < B.bbox.x0 || B.bbox.x1 < A.bbox.x0 || A.bbox.y1 < B.bbox.y0 || B.bbox.y1 < A.bbox.y0) return false;
+    const a = encolher(A), b = encolher(B);
+    if (a.some(p => dentro(p, b)) || b.some(p => dentro(p, a))) return true;
+    for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++) {
+      if (cruzam(a[i], a[(i + 1) % a.length], b[j], b[(j + 1) % b.length])) return true;
+    }
+    return false;
+  }
+
   function conferir(L, pavId, lay) {
     const av = [];
     const cod = id => { const a = L.ambientes.find(x => x.id === id); return a ? (a.codigo || a.nome || '?') : '?'; };
     const ids = [...lay.pos.keys()];
     for (let i = 0; i < ids.length; i++) {
       for (let j = i + 1; j < ids.length; j++) {
-        const a = lay.pos.get(ids[i]), b = lay.pos.get(ids[j]);
-        const ix = Math.min(a.x + a.dx, b.x + b.dx) - Math.max(a.x, b.x);
-        const iy = Math.min(a.y + a.dy, b.y + b.dy) - Math.max(a.y, b.y);
-        if (ix > 0.02 && iy > 0.02) av.push(`${cod(ids[i])} e ${cod(ids[j])} se sobrepõem (${fmt(ix)} × ${fmt(iy)} m). Confira as medidas e as bonecas das portas.`);
+        if (sobrepoe(lay.pos.get(ids[i]), lay.pos.get(ids[j]))) av.push(`${cod(ids[i])} e ${cod(ids[j])} se sobrepõem. Confira as medidas, os ângulos e as bonecas das portas.`);
       }
     }
     for (const g of lay.portas) {
@@ -361,99 +459,118 @@
       if (g.fora) av.push(`${oq} de ${cod(g.p.ambA)} não cabe na parede (${fmt(g.len)} m). Confira a boneca e a largura.`);
       if (g.foraB) av.push(`A porta entre ${cod(g.p.ambA)} e ${cod(g.p.ambB)} não cabe na parede de ${cod(g.p.ambB)}. Confira a boneca medida lá.`);
     }
-    for (const pt of lay.pontos) {
-      const pos = pt.u - pt.F.u0;
-      if (pos < -0.005 || pos > pt.len + 0.005) av.push(`Um ponto (${pt.cod}) de ${cod(pt.amb)} está fora da parede.`);
-    }
+    for (const pt of lay.pontos) if (pt.s < -0.005 || pt.s > pt.len + 0.005) av.push(`Um ponto (${pt.cod}) de ${cod(pt.amb)} está fora da parede.`);
     for (const o of lay.objetos) {
-      const r = lay.pos.get(o.amb);
-      if (o.x0 < r.x - 0.005 || o.y0 < r.y - 0.005 || o.x0 + o.bw > r.x + r.dx + 0.005 || o.y0 + o.bh > r.y + r.dy + 0.005) {
-        av.push(`${o.b.nome} de ${cod(o.amb)} passa da parede. Confira as cotas.`);
+      const R = lay.pos.get(o.amb);
+      if (R.fechado && o.contorno.some(p => !dentro(p, encolher(R, -0.02)))) av.push(`${o.b.nome} de ${cod(o.amb)} passa da parede. Confira as cotas.`);
+    }
+    for (const [id, R] of lay.pos) {
+      const a = R.a;
+      if (R.fechado && !(R.area > 0.01)) av.push(`${cod(id)} está sem medidas.`);
+      if (a.forma === 'poli' && R.fechado) {
+        const med = num(a.fechamento);
+        const W = R.walls[R.walls.length - 1];
+        if (med != null && Math.abs(med - W.len) > 0.02) av.push(`${cod(id)}: a última parede (${letra(W.k)}–A) medida tem ${fmt(med)} m, mas o desenho fecha com ${fmt(W.len)} m. Confira medidas e ângulos.`);
       }
     }
-    for (const [id, r] of lay.pos) if (!(r.dx > 0 && r.dy > 0)) av.push(`${cod(id)} está sem medidas.`);
     return av;
   }
 
   // ───────────────────────── Itens selecionáveis e cotas ─────────────────────────
   /**
    * Para o item selecionado devolve as cotas a desenhar e os valores que o painel mostra.
-   * item = {tipo:'porta', id} | {tipo:'ponto', amb, id} | {tipo:'obj', amb, id} | {tipo:'seg', amb, face, esq, dir}
-   * 'esq'/'dir' do segmento: 'canto' ou o id da abertura que o limita.
+   * item = {tipo:'porta', id} | {tipo:'ponto', amb, id} | {tipo:'obj', amb, id} | {tipo:'seg', amb, k, esq, dir}
+   * 'esq' do segmento fica do lado do canto inicial da parede; 'esq'/'dir' = 'canto' ou o id da abertura.
    */
   function infoItem(lay, item) {
     if (!item) return null;
     if (item.tipo === 'porta') {
       const g = lay.portas.find(x => x.p.id === item.id);
       if (!g) return null;
-      const r = lay.pos.get(g.p.ambA), F = face(r, g.p.parede);
-      const off = 0.32;   // por dentro de A
-      const ini = g.ua, fim = g.ub;
+      const W = g.W, off = 0.32;
       return {
-        g, F, valores: { esq: ini - F.u0, dir: F.u1 - fim, larg: g.w },
+        g, W, valores: { esq: g.c, dir: W.len - g.c - g.w, larg: g.w },
         cotas: [
-          { a: F.pt(F.u0, off), b: F.pt(ini, off), campo: 'esq' },
-          { a: F.pt(ini, off), b: F.pt(fim, off), campo: 'larg' },
-          { a: F.pt(fim, off), b: F.pt(F.u1, off), campo: 'dir' },
+          { a: ptW(W, 0, off), b: ptW(W, g.c, off), campo: 'esq' },
+          { a: ptW(W, g.c, off), b: ptW(W, g.c + g.w, off), campo: 'larg' },
+          { a: ptW(W, g.c + g.w, off), b: ptW(W, W.len, off), campo: 'dir' },
         ],
       };
     }
     if (item.tipo === 'ponto') {
       const pt = lay.pontos.find(x => x.i.id === item.id);
       if (!pt) return null;
-      const off = 0.45;
+      const W = pt.W, off = 0.45;
       return {
-        pt, F: pt.F, valores: { esq: pt.u - pt.F.u0, dir: pt.F.u1 - pt.u },
-        cotas: [{ a: pt.F.pt(pt.F.u0, off), b: pt.F.pt(pt.u, off), campo: 'esq' }, { a: pt.F.pt(pt.u, off), b: pt.F.pt(pt.F.u1, off), campo: 'dir' }],
+        pt, W, valores: { esq: pt.s, dir: W.len - pt.s },
+        cotas: [{ a: ptW(W, 0, off), b: ptW(W, pt.s, off), campo: 'esq' }, { a: ptW(W, pt.s, off), b: ptW(W, W.len, off), campo: 'dir' }],
       };
     }
     if (item.tipo === 'obj') {
-      const o = lay.objetos.find(x => x.o.id === item.id);
-      if (!o) return null;
-      const r = lay.pos.get(o.amb), cx = o.x0 + o.bw / 2, cy = o.y0 + o.bh / 2;
-      return {
-        obj: o, valores: { esq: o.x0 - r.x, dir: r.x + r.dx - o.x0 - o.bw, baixo: o.y0 - r.y, cima: r.y + r.dy - o.y0 - o.bh },
-        cotas: [
-          { a: [r.x, cy], b: [o.x0, cy], campo: 'esq' }, { a: [o.x0 + o.bw, cy], b: [r.x + r.dx, cy], campo: 'dir' },
-          { a: [cx, r.y], b: [cx, o.y0], campo: 'baixo' }, { a: [cx, o.y0 + o.bh], b: [cx, r.y + r.dy], campo: 'cima' },
-        ],
-      };
+      const ob = lay.objetos.find(x => x.o.id === item.id);
+      if (!ob) return null;
+      const R = lay.pos.get(ob.amb);
+      // as duas paredes mais próximas (que não sejam paralelas entre si), medidas na perpendicular
+      const cand = [];
+      for (const W of R.walls) {
+        const s = dot(sub(ob.centro, W.a), W.d);
+        if (s < -0.01 || s > W.len + 0.01) continue;
+        let dmin = Infinity, pmin = null;
+        for (const p of ob.contorno) { const dd = dot(sub(p, W.a), W.nIn); if (dd < dmin) { dmin = dd; pmin = p; } }
+        cand.push({ W, d: dmin, p: pmin });
+      }
+      cand.sort((a, b) => a.d - b.d);
+      const esc2 = [];
+      for (const c of cand) {
+        if (esc2.length === 2) break;
+        if (esc2.length === 1 && Math.abs(dot(esc2[0].W.d, c.W.d)) > 0.5) continue;
+        esc2.push(c);
+      }
+      const valores = {}, cotas = [], paredes = {};
+      for (const c of esc2) {
+        const campo = 'p' + c.W.k;
+        valores[campo] = c.d;
+        paredes[campo] = c.W;
+        cotas.push({ a: sub(c.p, mul(c.W.nIn, c.d)), b: c.p, campo });
+      }
+      return { obj: ob, R, valores, cotas, paredes };
     }
     if (item.tipo === 'seg') {
-      const r = lay.pos.get(item.amb);
-      if (!r) return null;
-      const F = face(r, item.face), vs = vaosDaFace(lay, item.amb, item.face);
+      const R = lay.pos.get(item.amb);
+      const W = R && R.walls[item.k];
+      if (!W) return null;
+      const vs = vaosDaParede(lay, item.amb, item.k);
       const vE = item.esq === 'canto' ? null : vs.find(v => v.g.p.id === item.esq);
       const vD = item.dir === 'canto' ? null : vs.find(v => v.g.p.id === item.dir);
       if ((item.esq !== 'canto' && !vE) || (item.dir !== 'canto' && !vD)) return null;
-      const u0 = vE ? vE.ub : F.u0, u1 = vD ? vD.ua : F.u1;
-      return { F, vE, vD, u0, u1, valores: { trecho: u1 - u0 }, cotas: [{ a: F.pt(u0, 0.32), b: F.pt(u1, 0.32), campo: 'trecho' }] };
+      const u0 = vE ? vE.ub : 0, u1 = vD ? vD.ua : W.len;
+      return { W, R, vE, vD, u0, u1, valores: { trecho: u1 - u0 }, cotas: [{ a: ptW(W, u0, 0.32), b: ptW(W, u1, 0.32), campo: 'trecho' }] };
     }
     return null;
   }
 
-  /** Identifica o trecho de parede tocado (entre cantos e aberturas). */
-  function segmentoEm(lay, amb, f, u0, u1) {
-    const r = lay.pos.get(amb), F = face(r, f), vs = vaosDaFace(lay, amb, f);
-    const esq = Math.abs(u0 - F.u0) < 1e-4 ? 'canto' : (vs.find(v => Math.abs(v.ub - u0) < 1e-4) || { g: { p: { id: 'canto' } } }).g.p.id;
-    const dir = Math.abs(u1 - F.u1) < 1e-4 ? 'canto' : (vs.find(v => Math.abs(v.ua - u1) < 1e-4) || { g: { p: { id: 'canto' } } }).g.p.id;
-    return { tipo: 'seg', amb, face: f, esq, dir };
+  /** Identifica o trecho de parede tocado (entre cantos e aberturas). s0/s1 em distância a partir do canto inicial. */
+  function segmentoEm(lay, amb, k, s0, s1) {
+    const W = lay.pos.get(amb).walls[k], vs = vaosDaParede(lay, amb, k);
+    const esq = s0 < 1e-4 ? 'canto' : ((vs.find(v => Math.abs(v.ub - s0) < 1e-4) || {}).g || { p: { id: 'canto' } }).p.id;
+    const dir = Math.abs(s1 - W.len) < 1e-4 ? 'canto' : ((vs.find(v => Math.abs(v.ua - s1) < 1e-4) || {}).g || { p: { id: 'canto' } }).p.id;
+    return { tipo: 'seg', amb, k, esq, dir };
   }
 
   // ───────────────────────── SVG ─────────────────────────
   function enquadrar(lay, W, H, ids) {
-    const rs = [...lay.pos.entries()].filter(([id]) => !ids || ids.includes(id)).map(e => e[1]).filter(r => r.dx > 0 && r.dy > 0);
+    const rs = [...lay.pos.entries()].filter(([id]) => !ids || ids.includes(id)).map(e => e[1]).filter(r => r.verts.length);
     if (!rs.length) return { s: 40, ox: W / 2, oy: H / 2 };
     const b = caixa(rs);
     const m = 0.9;
-    const bw = b.x1 - b.x0 + 2 * m, bh = b.y1 - b.y0 + 2 * m;
+    const bw = Math.max(b.x1 - b.x0, 1) + 2 * m, bh = Math.max(b.y1 - b.y0, 1) + 2 * m;
     const s = Math.max(4, Math.min((W - 24) / bw, (H - 24) / bh, 160));
     return { s, ox: W / 2 - ((b.x0 + b.x1) / 2) * s, oy: H / 2 + ((b.y0 + b.y1) / 2) * s };
   }
 
   /**
    * Desenha o pavimento. view = { s (px por metro), ox, oy }.
-   * o = { sel, item, cotas: [{a,b,txt,campo}], mais, destaque: [ids], toque: true (camadas de toque) }
+   * o = { sel, item, cotas, mais, destaque: [ids], toque, desenho: idDoAmbienteSendoDesenhado }
    */
   function svg(L, pavId, lay, view, o = {}) {
     const { s, ox, oy } = view;
@@ -461,14 +578,15 @@
     const P = pt => `${X(pt[0])},${Y(pt[1])}`;
     const ln = (a, b, cls, extra = '') => `<line class="${cls}" x1="${X(a[0])}" y1="${Y(a[1])}" x2="${X(b[0])}" y2="${Y(b[1])}"${extra}/>`;
     const ls = linhas(lay);
-    const amb = id => L.ambientes.find(a => a.id === id) || {};
     const it = o.item;
     let out = '';
 
     // fundos
-    for (const [id, r] of lay.pos) {
-      const cls = ['pl-fundo', o.sel === id && !it ? 'sel' : '', o.destaque && o.destaque.includes(id) ? 'dest' : ''].join(' ');
-      out += `<rect class="${cls}" data-amb="${esc(id)}" x="${X(r.x)}" y="${Y(r.y + r.dy)}" width="${+(r.dx * s).toFixed(1)}" height="${+(r.dy * s).toFixed(1)}"/>`;
+    for (const [id, R] of lay.pos) {
+      if (R.verts.length < 2) continue;
+      const cls = ['pl-fundo', o.sel === id && !it ? 'sel' : '', (o.destaque && o.destaque.includes(id)) || o.desenho === id ? 'dest' : ''].join(' ');
+      out += `<polygon class="${cls}" data-amb="${esc(id)}" points="${R.verts.map(P).join(' ')}"/>`;
+      if (!R.fechado && R.verts.length > 2) out += ln(R.verts[R.verts.length - 1], R.verts[0], 'pl-fechar');
     }
     // objetos
     for (const ob of lay.objetos) {
@@ -477,10 +595,10 @@
       for (const pr of ob.prims) {
         if (pr.t === 'l') out += ln(pr.pts[0], pr.pts[1], '');
         else if (pr.t === 'c') out += `<circle cx="${X(pr.cx)}" cy="${Y(pr.cy)}" r="${Math.max(1.5, pr.r * s).toFixed(1)}"/>`;
-        else if (pr.t === 't') { if (ob.bw * s > 24) out += `<text x="${X(pr.cx)}" y="${Y(pr.cy) + 3}" text-anchor="middle">${esc(pr.txt)}</text>`; }
+        else if (pr.t === 't') { if (ob.w * s > 24) out += `<text x="${X(pr.cx)}" y="${Y(pr.cy) + 3}" text-anchor="middle">${esc(pr.txt)}</text>`; }
         else out += `<polygon class="${pr.t === 'pf' ? 'cheio' : pr.t === 'pd' ? 'trac' : ''}" points="${pr.pts.map(P).join(' ')}"/>`;
       }
-      if (ob.o.tipo === 'desnivel') out += `<text class="pl-nv" x="${X(ob.x0 + ob.bw / 2)}" y="${Y(ob.y0 + ob.bh / 2) + 4}" text-anchor="middle">NV ${fmtNivel(ob.nivel)}</text>`;
+      if (ob.o.tipo === 'desnivel') out += `<text class="pl-nv" x="${X(ob.centro[0])}" y="${Y(ob.centro[1]) + 4}" text-anchor="middle">NV ${fmtNivel(ob.nivel)}</text>`;
       out += '</g>';
     }
     // paredes, batentes, folhas e janelas
@@ -491,24 +609,20 @@
       if (pr.t === 'a') {
         const ux = X(pr.de[0]) - X(pr.cx), uy = Y(pr.de[1]) - Y(pr.cy), vx = X(pr.ate[0]) - X(pr.cx), vy = Y(pr.ate[1]) - Y(pr.cy);
         const varre = ux * vy - uy * vx > 0 ? 1 : 0, rr = +(pr.r * s).toFixed(1);
-        out += `<path class="pl-arco${sel}" d="M${P(pr.de).replace(',', ' ')} A${rr} ${rr} 0 0 ${varre} ${P(pr.ate).replace(',', ' ')}"/>`;
+        out += `<path class="pl-arco${sel}" d="M${X(pr.de[0])} ${Y(pr.de[1])} A${rr} ${rr} 0 0 ${varre} ${X(pr.ate[0])} ${Y(pr.ate[1])}"/>`;
       } else {
         out += ln(pr.pts[0], pr.pts[1], (pr.t === 'lf' ? 'pl-correr' : pr.t === 'ld' ? 'pl-janela-alta' : 'pl-folha') + sel);
       }
     }
-    // trecho de parede selecionado
     const info = infoItem(lay, it);
-    if (it && it.tipo === 'seg' && info) out += ln(info.F.pt(info.u0), info.F.pt(info.u1), 'pl-seg-sel');
+    if (it && it.tipo === 'seg' && info) out += ln(ptW(info.W, info.u0), ptW(info.W, info.u1), 'pl-seg-sel');
 
     if (o.toque) {
       for (const l of ls.paredes) out += ln([l[0], l[1]], [l[2], l[3]], 'pl-seg-alvo', ` data-seg="${esc(l[4])}|${l[5]}|${l[6]}|${l[7]}"`);
-      for (const ob of lay.objetos) {
-        out += `<rect class="pl-alvo" data-obj="${esc(ob.amb)}|${esc(ob.o.id)}" x="${X(ob.x0)}" y="${Y(ob.y0 + ob.bh)}" width="${+(ob.bw * s).toFixed(1)}" height="${+(ob.bh * s).toFixed(1)}"/>`;
-      }
+      for (const ob of lay.objetos) out += `<polygon class="pl-alvo" data-obj="${esc(ob.amb)}|${esc(ob.o.id)}" points="${ob.contorno.map(P).join(' ')}"/>`;
       for (const g of lay.portas) {
-        const xs = [g.x1, g.x2, g.x1 + g.nx * g.t], ys = [g.y1, g.y2, g.y1 + g.ny * g.t];
-        const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), pad = 9;
-        out += `<rect class="pl-alvo" data-porta="${esc(g.p.id)}" x="${X(x0) - pad}" y="${Y(y1) - pad}" width="${(x1 - x0) * s + 2 * pad}" height="${(y1 - y0) * s + 2 * pad}"/>`;
+        const q = [[g.x1, g.y1], [g.x2, g.y2], [g.x2 + g.nx * g.t, g.y2 + g.ny * g.t], [g.x1 + g.nx * g.t, g.y1 + g.ny * g.t]];
+        out += `<polygon class="pl-alvo pl-porta-alvo" data-porta="${esc(g.p.id)}" points="${q.map(P).join(' ')}"/>`;
       }
     }
     // pontos de instalação
@@ -520,29 +634,41 @@
         `<circle cx="${X(pt.cx)}" cy="${Y(pt.cy)}" r="${rr}"/><text x="${X(pt.cx)}" y="${Y(pt.cy) + 3.5}" text-anchor="middle">${esc(pt.cod)}</text></g>`;
     }
     // textos dos ambientes
-    for (const [id, r] of lay.pos) {
-      const a = amb(id), wpx = r.dx * s, hpx = r.dy * s;
+    for (const [id, R] of lay.pos) {
+      if (!R.fechado) continue;
+      const a = R.a, wpx = (R.bbox.x1 - R.bbox.x0) * s, hpx = (R.bbox.y1 - R.bbox.y0) * s;
       if (wpx < 34 || hpx < 22) continue;
-      const cx = X(r.x + r.dx / 2), cy = Y(r.y + r.dy / 2);
-      const linhasTxt = [`<tspan class="pl-cod">${esc(a.codigo || '')}</tspan>`];
-      if (a.nome && wpx > 70) linhasTxt.push(`<tspan x="${cx}" dy="14" class="pl-nome">${esc(cortar(a.nome, Math.floor(wpx / 7)))}</tspan>`);
-      if (hpx > 46) linhasTxt.push(`<tspan x="${cx}" dy="13" class="pl-area">${fmt(r.dx * r.dy)} m²</tspan>`);
-      if (hpx > 60 && (num(a.nivel) || 0) !== 0) linhasTxt.push(`<tspan x="${cx}" dy="13" class="pl-nv">NV ${fmtNivel(r.nivel)}</tspan>`);
-      out += `<text class="pl-txt" x="${cx}" y="${cy - (linhasTxt.length - 1) * 6.5}" text-anchor="middle">${linhasTxt.join('')}</text>`;
+      const cx = X(R.centro[0]), cy = Y(R.centro[1]);
+      const t = [`<tspan class="pl-cod">${esc(a.codigo || '')}</tspan>`];
+      if (a.nome && wpx > 70) t.push(`<tspan x="${cx}" dy="14" class="pl-nome">${esc(cortar(a.nome, Math.floor(wpx / 7)))}</tspan>`);
+      if (hpx > 46 && R.area != null) t.push(`<tspan x="${cx}" dy="13" class="pl-area">${fmt(R.area)} m²</tspan>`);
+      if (hpx > 60 && R.nivel) t.push(`<tspan x="${cx}" dy="13" class="pl-nv">NV ${fmtNivel(R.nivel)}</tspan>`);
+      out += `<text class="pl-txt" x="${cx}" y="${cy - (t.length - 1) * 6.5}" text-anchor="middle">${t.join('')}</text>`;
     }
-    // medidas do ambiente selecionado (quando nada dentro dele está selecionado)
-    if (o.sel && !it && lay.pos.has(o.sel)) {
-      const r = lay.pos.get(o.sel);
-      out += `<text class="pl-med" x="${X(r.x + r.dx / 2)}" y="${Y(r.y) + 15}" text-anchor="middle">${fmt(r.dx)}</text>`;
-      out += `<text class="pl-med" x="${X(r.x) - 6}" y="${Y(r.y + r.dy / 2) + 4}" text-anchor="end">${fmt(r.dy)}</text>`;
+    // cantos com letras e medidas das paredes (ambiente selecionado ou em desenho)
+    const marcar = o.cantos || o.desenho || (!it && o.sel);
+    if (marcar && lay.pos.has(marcar)) {
+      const R = lay.pos.get(marcar);
+      R.verts.forEach((p, i) => {
+        const W1 = R.walls[(i - 1 + R.walls.length) % R.walls.length], W2 = R.walls[i];
+        let n = [0, 0];
+        if (W1 && (R.fechado || i > 0)) n = add(n, W1.nIn);
+        if (W2) n = add(n, W2.nIn);
+        const L = len(n) || 1, q = add(p, mul(n, 0.28 / L));
+        out += `<g class="pl-canto"><circle cx="${X(p[0])}" cy="${Y(p[1])}" r="3"/><text x="${X(q[0])}" y="${Y(q[1]) + 4}" text-anchor="middle">${letra(i)}</text></g>`;
+      });
+      for (const W of R.walls) {
+        if (W.len * s < 28) continue;
+        const m = ptW(W, W.len / 2, -0.22);
+        out += `<text class="pl-med" x="${X(m[0])}" y="${Y(m[1]) + 4}" text-anchor="middle">${fmt(W.len)}</text>`;
+      }
     }
     // cotas
     const cotas = [...(o.cotas || []), ...(info ? info.cotas.map(c => ({ ...c, txt: fmt(info.valores[c.campo]) })) : [])];
     for (const c of cotas) {
       if (!c) continue;
-      const a = c.a || [c.x1, c.y1], b = c.b || [c.x2, c.y2];
-      const x1 = X(a[0]), y1 = Y(a[1]), x2 = X(b[0]), y2 = Y(b[1]);
-      const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1, px = -dy / len * 5, py = dx / len * 5;
+      const x1 = X(c.a[0]), y1 = Y(c.a[1]), x2 = X(c.b[0]), y2 = Y(c.b[1]);
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1, px = -dy / L * 5, py = dx / L * 5;
       const tx = (x1 + x2) / 2 + px * 2.4, ty = (y1 + y2) / 2 + py * 2.4 + 4;
       out += `<g class="pl-cota${c.campo ? ' editavel' : ''}"${c.campo ? ` data-cota="${c.campo}"` : ''}><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>` +
         `<line x1="${x1 - px}" y1="${y1 - py}" x2="${x1 + px}" y2="${y1 + py}"/><line x1="${x2 - px}" y1="${y2 - py}" x2="${x2 + px}" y2="${y2 + py}"/>` +
@@ -562,23 +688,20 @@
   }
   const cortar = (s, n) => s.length > n ? s.slice(0, Math.max(3, n - 1)) + '…' : s;
 
-  /** Cota da boneca: do canto da parede até o batente, por dentro do ambiente. lado = 'A' | 'B'. */
+  /** Cota da boneca: do canto até o batente, por dentro do ambiente. lado = 'A' | 'B'. */
   function cotaBoneca(lay, portaId, lado, txt) {
     const g = lay.portas.find(x => x.p.id === portaId);
     if (!g) return null;
-    const id = lado === 'A' ? g.p.ambA : g.p.ambB;
-    const r = lay.pos.get(id);
-    if (!r) return null;
-    const f = lado === 'A' ? g.p.parede : OPOSTA[g.p.parede];
-    const F = face(r, f), canto = lado === 'A' ? g.p.canto : g.p.cantoB;
-    return canto === 'fim' ? { a: F.pt(g.ub, 0.3), b: F.pt(F.u1, 0.3), txt } : { a: F.pt(F.u0, 0.3), b: F.pt(g.ua, 0.3), txt };
+    if (lado === 'A') {
+      return g.p.canto === 'fim' ? { a: ptW(g.W, g.c + g.w, 0.3), b: ptW(g.W, g.W.len, 0.3), txt } : { a: ptW(g.W, 0, 0.3), b: ptW(g.W, g.c, 0.3), txt };
+    }
+    if (!g.ligada) return null;
+    return g.p.cantoB === 'fim' ? { a: ptW(g.WB, g.cB + g.w, 0.3), b: ptW(g.WB, g.WB.len, 0.3), txt } : { a: ptW(g.WB, 0, 0.3), b: ptW(g.WB, g.cB, 0.3), txt };
   }
   /** Cota da largura da porta, por dentro do ambiente A, em linha com a cota da boneca. */
   function cotaLargura(lay, portaId, txt) {
     const g = lay.portas.find(x => x.p.id === portaId);
-    if (!g) return null;
-    const F = face(lay.pos.get(g.p.ambA), g.p.parede);
-    return { a: F.pt(g.ua, 0.3), b: F.pt(g.ub, 0.3), txt };
+    return g ? { a: ptW(g.W, g.c, 0.3), b: ptW(g.W, g.c + g.w, 0.3), txt } : null;
   }
 
   /** Miniatura de um objeto da biblioteca (para o seletor). */
@@ -637,20 +760,20 @@
           else if (pr.t === 't') texto(cam, pr.cx + dx, pr.cy, 0.1, pr.txt);
           else poli(cam, pr.pts, dx);
         }
-        if (ob.o.tipo === 'desnivel') texto('TEXTOS', ob.x0 + ob.bw / 2 + dx, ob.y0 + ob.bh / 2, 0.12, `NV ${fmtNivel(ob.nivel)}`);
+        if (ob.o.tipo === 'desnivel') texto('TEXTOS', ob.centro[0] + dx, ob.centro[1], 0.12, `NV ${fmtNivel(ob.nivel)}`);
       }
       for (const pt of lay.pontos) {
         linha('INSTALACOES', pt.px + dx, pt.py, pt.cx + dx, pt.cy);
         circulo('INSTALACOES', pt.cx + dx, pt.cy, 0.1);
         texto('INSTALACOES', pt.cx + dx, pt.cy, 0.07, pt.cod);
       }
-      for (const [id, r] of lay.pos) {
-        const a = L.ambientes.find(x => x.id === id) || {};
-        const cx = r.x + r.dx / 2 + dx, cy = r.y + r.dy / 2;
+      for (const [, R] of lay.pos) {
+        if (!R.fechado) continue;
+        const a = R.a, cx = R.centro[0] + dx, cy = R.centro[1];
         texto('TEXTOS', cx, cy + 0.25, 0.2, a.codigo || '');
         if (a.nome) texto('TEXTOS', cx, cy, 0.15, a.nome);
-        texto('TEXTOS', cx, cy - 0.25, 0.12, `${fmt(r.dx * r.dy)} m2`);
-        if (r.nivel) texto('TEXTOS', cx, cy - 0.45, 0.12, `NV ${fmtNivel(r.nivel)}`);
+        if (R.area != null) texto('TEXTOS', cx, cy - 0.25, 0.12, `${fmt(R.area)} m2`);
+        if (R.nivel) texto('TEXTOS', cx, cy - 0.45, 0.12, `NV ${fmtNivel(R.nivel)}`);
       }
       texto('TEXTOS', desloc + (b.x1 - b.x0) / 2, b.y1 + 1, 0.4, pav.nome || pav.sigla || 'Pavimento');
       desloc += (b.x1 - b.x0) + 10;
@@ -670,8 +793,57 @@
     ].join('\n') + '\n';
   }
 
+  // ───────────────────────── Conversão de dados antigos ─────────────────────────
+  /**
+   * Até a v1.2 as paredes eram 'baixo', 'dir', 'cima', 'esq' e as distâncias eram medidas a partir
+   * do canto esquerdo ou de baixo. Agora são índices (A–B = 0, B–C = 1, C–D = 2, D–A = 3) e as
+   * distâncias partem do canto inicial de cada parede, que nas paredes de cima e da esquerda é o
+   * canto oposto. Converte portas, pontos e objetos. Devolve true se mudou algo.
+   */
+  const INDICE = { baixo: 0, dir: 1, cima: 2, esq: 3 };
+  const INVERTE = { cima: true, esq: true };
+  const OPOSTA_NOME = { cima: 'baixo', baixo: 'cima', esq: 'dir', dir: 'esq' };
+  function converterAntigo(L) {
+    let mudou = false;
+    const troca = c => c === 'fim' ? 'ini' : 'fim';
+    for (const p of L.portas || []) {
+      if (typeof p.parede === 'string' && p.parede in INDICE) {
+        const f = p.parede, fB = OPOSTA_NOME[f];
+        p.parede = INDICE[f];
+        if (INVERTE[f]) p.canto = troca(p.canto);
+        if (p.paredeB == null || p.paredeB === '') { p.paredeB = INDICE[fB]; if (INVERTE[fB]) p.cantoB = troca(p.cantoB); }
+        // na parede de cima/esquerda o sentido inverteu: dobradiça e sentido de correr trocam de lado
+        if (INVERTE[f]) p.lado = troca(p.lado);
+        mudou = true;
+      }
+    }
+    for (const a of L.ambientes || []) {
+      for (const i of a.inst || []) {
+        if (typeof i.parede === 'string' && i.parede in INDICE) {
+          const f = i.parede, dx = num(a.comp) || 0, dy = num(a.larg) || 0, lenW = f === 'baixo' || f === 'cima' ? dx : dy;
+          i.parede = INDICE[f];
+          if (INVERTE[f] && num(i.pos) != null) i.pos = String(Math.round((lenW - num(i.pos)) * 100) / 100).replace('.', ',');
+          mudou = true;
+        }
+      }
+      for (const o of a.objetos || []) {
+        if (o.cx == null && o.x != null) {
+          const b = BIBLIOTECA[o.tipo] || { w: 1, d: 1 };
+          const w = num(o.w) || b.w, d = num(o.d) || b.d, r = ((+o.rot || 0) % 360 + 360) % 360;
+          const bw = r % 180 ? d : w, bh = r % 180 ? w : d;
+          o.cx = Math.round(((num(o.x) || 0) + bw / 2) * 1000) / 1000;
+          o.cy = Math.round(((num(o.y) || 0) + bh / 2) * 1000) / 1000;
+          delete o.x; delete o.y;
+          mudou = true;
+        }
+      }
+    }
+    return mudou;
+  }
+
   raiz.Planta = {
-    layout, linhas, conferir, enquadrar, svg, cotaBoneca, cotaLargura, infoItem, segmentoEm, vaosDaFace, face, dxf, caixa, iconeObjeto,
-    OPOSTA, HORIZ, ESPESSURA_PADRAO, PD_PADRAO, MODELOS, PADRAO_ABERTURA, PONTOS, BIBLIOTECA, ehJanela, canon, fmtNivel, nivelDe, pdDe,
+    layout, linhas, conferir, enquadrar, svg, cotaBoneca, cotaLargura, infoItem, segmentoEm, vaosDaParede, dxf, caixa, iconeObjeto,
+    formaLocal, areaPerimetro, converterAntigo, letra, ptW, paredesDe,
+    ESPESSURA_PADRAO, PD_PADRAO, MODELOS, PADRAO_ABERTURA, PONTOS, BIBLIOTECA, ehJanela, canon, fmtNivel, nivelDe, pdDe, RAD,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -8,21 +8,48 @@ Responsável: Melqui Domingos, Núcleo BIM.
 
 ## O que faz
 
-### Planta baixa (v1.1)
+### Planta baixa (v1.2)
 
-A planta é montada ambiente por ambiente, a partir das portas:
+**Ambientes.** Cada ambiente é um polígono de paredes internas. Os cantos recebem letras (A, B, C…)
+e as paredes são chamadas pelos cantos (parede A–B).
 
-1. Desenhe o primeiro ambiente com as medidas internas (comprimento ↔ e largura ↕).
-2. Toque nele e em **+ Porta**: escolha a parede (de cima, de baixo, da esquerda, da direita), a largura do vão, a espessura da parede (medida no batente) e a **boneca**, que é a distância do canto até o batente, medida por dentro do ambiente e a partir do canto indicado.
-3. Toque no **+** que aparece do lado de fora da porta e informe o ambiente do outro lado: a parede onde está a porta, a profundidade e a boneca da mesma porta medida por dentro dele.
-4. O ambiente novo é posicionado e alinhado sozinho. Repita a partir de qualquer porta.
+- **Retângulo:** informe comprimento (A–B) e largura (B–C).
+- **Forma livre (paredes fora do esquadro):** toque em **Desenhar parede a parede**, depois no canto A
+  e em cada canto seguinte. A medida e o ângulo vêm do toque; ajuste os valores exatos nos campos.
+  O ângulo é o **interno**, entre a parede anterior e a nova (90 = esquadro, 270 = canto de um "L").
+  Pode marcar os cantos em qualquer sentido. A última parede fecha sozinha; se ela foi medida,
+  informe em **Medidas** e a ferramenta avisa se o desenho não fecha.
 
-Cada formulário mostra uma pré-visualização com as cotas que estão sendo digitadas.
-As posições não são guardadas: são recalculadas a cada desenho. Por isso, corrigir uma medida
-ou uma boneca reposiciona tudo o que depende dela. A ferramenta avisa quando dois ambientes se
-sobrepõem ou quando uma porta não cabe na parede, o que costuma indicar medida errada.
+**Ligação pelas portas.** O primeiro ambiente fica onde foi desenhado; os outros entram pelas portas:
+
+1. Toque numa parede: aparece o comprimento daquele trecho (editável) e as opções **Porta**,
+   **Janela**, **Ponto** e **Objeto**, inseridos no lugar tocado.
+2. Toque no **+** do lado de fora da porta e informe o ambiente do outro lado: a parede da porta
+   (A–B dele), a profundidade (se for retângulo) e a **boneca** da mesma porta medida por dentro dele.
+   Se ele não for retangular, use **Desenhar parede a parede**: a primeira parede já é a da porta.
+3. O ambiente novo é posicionado e alinhado sozinho, inclusive em paredes inclinadas.
+
+**Portas e janelas:** giro, giro duplo, correr, correr duplo e vão livre, com lado de abertura e
+dobradiça (ou sentido de correr); janela baixa e janela alta, com largura, altura e peitoril.
+
+**Cotas editáveis:** porta, janela, ponto ou objeto selecionado mostra as cotas até os cantos (ou até
+as paredes mais próximas, no caso de objetos). Editar a cota move o elemento.
+
+**Objetos (biblioteca básica):** mesa, mesa de reunião, cadeira, armário, estante, arquivo, sofá,
+bancada, bancada com pia, lavatório, vaso sanitário, mictório, box, geladeira, bebedouro, pilar,
+escada e patamar/desnível. Giram em qualquer ângulo.
+
+**Níveis:** nível do piso por ambiente e patamar/desnível com nível próprio, mostrados na planta.
+
+**Vista 3D:** botão **3D** na planta. Arraste para girar, dois dedos para aproximar, **Corte** baixa
+as paredes para 1,20 m e mostra o interior. Usa pé-direito, níveis, alturas de portas, janelas e objetos.
+
+As posições não são guardadas: são recalculadas a cada desenho. Por isso, corrigir uma medida, um
+ângulo ou uma boneca reposiciona tudo o que depende dela. A ferramenta avisa quando dois ambientes se
+sobrepõem, quando uma porta não cabe na parede ou um objeto passa da parede.
 
 Arraste para mover a planta; use dois dedos (ou a roda do mouse) para aproximar.
+Levantamentos feitos nas versões anteriores são convertidos automaticamente ao abrir.
 
 ### Informações de cada ambiente
 
@@ -34,8 +61,8 @@ Arraste para mover a planta; use dois dedos (ou a roda do mouse) para aproximar.
 - **Instalações e encaminhamentos:** pontos (tomada, quadro, ar-condicionado, ralo…) com quantidade e altura; calhas, eletrodutos, tubulações e dutos com comprimento aproximado e descrição do trajeto. Cada item pode ter fotos.
 - **Conferência:** percentual de preenchimento por ambiente e alertas (medida que parece estar em centímetros, pé-direito fora do usual, perímetro incompatível com a área, código repetido).
 - **Exportação:**
-  - Planta baixa (`.dxf`, metros) com as camadas PAREDES, PORTAS e TEXTOS, para o AutoCAD ou para importar no Revit. Pavimentos lado a lado.
-  - Planilha Excel (`.xlsx`) com as abas *Ambientes* (com a posição X/Y de cada um na planta), *Portas*, *Instalações* e *Resumo* (área por pavimento).
+  - Planta baixa (`.dxf`, metros) com as camadas PAREDES, ESQUADRIAS, ACIMA_DO_CORTE, MOBILIARIO, DESNIVEIS, INSTALACOES e TEXTOS, para o AutoCAD ou para importar no Revit. Pavimentos lado a lado.
+  - Planilha Excel (`.xlsx`) com as abas *Ambientes* (com paredes, posição na planta e nível), *Portas e janelas*, *Instalações* (com parede e posição), *Objetos* e *Resumo* (área por pavimento).
   - Planilha + planta + fotos (`.zip`), com as fotos nomeadas pelo código do ambiente (`T-01_01.jpg`, `T-01_I02_01.jpg`).
   - Backup completo (`.json`) para abrir o levantamento em outro aparelho (botão **Importar backup**).
 - Salva sozinho a cada alteração, tem tema claro (bom no sol) e escuro, e segue o padrão visual FC (`DESIGN.md`).
@@ -97,7 +124,8 @@ sempre carregar o código novo. Para testar o modo offline localmente, abra `htt
 |---|---|
 | `index.html` | Página |
 | `app.js` | Telas, formulários, cálculos, fotos, exportação e importação |
-| `planta.js` | Posição dos ambientes pelas portas, desenho da planta (SVG), conferência e DXF |
+| `planta.js` | Polígonos dos ambientes, posição pelas portas, desenho da planta (SVG), cotas, conferência e DXF |
+| `vista3d.js` | Maquete 3D simples (SVG) a partir da planta |
 | `xlsx.js` | Gera `.xlsx` e `.zip` sem biblioteca externa |
 | `app.css` | Ajustes de uso no celular sobre o padrão FC |
 | `fc-base.css`, `fonts/`, `DESIGN.md` | Design system dos painéis FC (Barlow local) |
@@ -105,5 +133,5 @@ sempre carregar o código novo. Para testar o modo offline localmente, abra `htt
 
 ## Próximas versões (sugestão)
 
-- **Planta:** ligar uma porta a um ambiente já desenhado (fecha o circuito e confere as medidas), janelas, ambiente em L, lado de abertura da porta, marcar as instalações na planta.
-- **Depois:** relatório para impressão/PDF, juntar levantamentos de várias pessoas num só, nomes de colunas iguais aos parâmetros do Revit para criar os Rooms automaticamente, envio direto para o SharePoint, trena laser Bluetooth (Chrome no Android).
+- **Planta:** ligar uma porta a um ambiente já desenhado (fecha o circuito e confere as medidas), parede curva, pontos no teto e no piso (luminárias, ralos), encaixar o canto desenhado em cantos existentes.
+- **Depois:** exportar o 3D (IFC ou OBJ), relatório para impressão/PDF, juntar levantamentos de várias pessoas num só, nomes de colunas iguais aos parâmetros do Revit para criar os Rooms automaticamente, envio direto para o SharePoint, trena laser Bluetooth (Chrome no Android).

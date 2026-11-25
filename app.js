@@ -150,7 +150,10 @@ function normalizar(L) {
   L.portas = Array.isArray(L.portas) ? L.portas : [];
   const idsAmb = new Set(L.ambientes.map(a => a.id));
   L.portas = L.portas.filter(p => idsAmb.has(p.ambA));
+  Planta.converterAntigo(L);   // paredes por nome (até a v1.2) → índice
   for (const p of L.portas) {
+    p.parede = +p.parede || 0;
+    p.paredeB = +p.paredeB || 0;
     if (p.ambB && !idsAmb.has(p.ambB)) { p.ambB = null; p.bonecaB = ''; }
     if (!p.modelo) p.modelo = p.tipo === 'vao' ? 'vao' : 'giro';   // dados da v1.1
     delete p.tipo;
@@ -171,7 +174,8 @@ function normalizar(L) {
     a.inst = Array.isArray(a.inst) ? a.inst : [];
     for (const i of a.inst) i.fotos = Array.isArray(i.fotos) ? i.fotos : [];
     for (const k of ['codigo', 'nome', 'uso', 'comp', 'larg', 'lados', 'peDireito', 'piso', 'parede', 'forro', 'conservacao', 'obs']) a[k] = a[k] ?? '';
-    a.forma = a.forma === 'irr' ? 'irr' : 'ret';
+    a.forma = ['irr', 'poli'].includes(a.forma) ? a.forma : 'ret';
+    if (a.forma === 'poli') a.paredes = Array.isArray(a.paredes) ? a.paredes : [];
     if (!L.pavimentos.some(p => p.id === a.pavimentoId)) a.pavimentoId = L.pavimentos[0].id;
   }
   return L;
@@ -191,7 +195,10 @@ const partesValidas = a => a.partes.filter(p => num(p.c) > 0 && num(p.l) > 0);
 
 function calc(a) {
   let area = null, perim = null;
-  if (a.forma === 'ret') {
+  if (a.forma === 'poli') {
+    const ap = Planta.areaPerimetro(a);
+    area = ap.area; perim = ap.perim;
+  } else if (a.forma === 'ret') {
     const c = num(a.comp), l = num(a.larg);
     if (c > 0 && l > 0) { area = c * l; perim = 2 * (c + l); }
   } else {
@@ -223,7 +230,7 @@ const classeFarol = pct => pct === 100 ? 'g' : pct >= 50 ? 'a' : 'r';
 
 function alertas(a, L) {
   const w = [], c = calc(a);
-  const medidas = a.forma === 'ret' ? [num(a.comp), num(a.larg)] : a.partes.flatMap(p => [num(p.c), num(p.l)]);
+  const medidas = a.forma === 'poli' ? (a.paredes || []).map(p => num(p.c)) : a.forma === 'ret' ? [num(a.comp), num(a.larg)] : a.partes.flatMap(p => [num(p.c), num(p.l)]);
   if (medidas.some(d => d != null && d > 150)) w.push('Há medida acima de 150 m. Confira se não foi digitada em centímetros.');
   if (medidas.some(d => d != null && d > 0 && d < 0.3)) w.push('Há medida abaixo de 0,30 m. Confira.');
   if (c.pd != null && (c.pd < 2.2 || c.pd > 20)) w.push('Pé-direito fora do usual (2,20 a 20 m). Confira.');
@@ -564,8 +571,10 @@ function telaAmbiente() {
   const idPav = fid();
 
   const ligado = estaLigado(L, a);
-  const medidas = a.forma === 'ret'
-    ? `<div class="grid2">${campoNum('Comprimento ↔ (na planta)', 'a.comp', a.comp)}${campoNum('Largura ↕ (na planta)', 'a.larg', a.larg)}</div>`
+  const medidas = a.forma === 'poli'
+    ? `<p class="dica">Forma livre, ${(a.paredes || []).length + 1} paredes: ${(a.paredes || []).map((p, k) => `${Planta.letra(k)}–${Planta.letra(k + 1)} ${fmt(num(p.c))} m${k ? ` (${h(p.ang)}°)` : ''}`).join(' · ')}. Para mudar, use <b>Ver na planta</b> e <b>Medidas</b>.</p>`
+    : a.forma === 'ret'
+    ? `<div class="grid2">${campoNum('Comprimento (parede A–B)', 'a.comp', a.comp)}${campoNum('Largura (parede B–C)', 'a.larg', a.larg)}</div>`
     : `<p class="dica">Divida o ambiente em retângulos. Marque "descontar" para recortes (pilar, shaft, escada).</p>
        ${a.partes.map((p, i) => `<div class="parte">
           <span class="parte-n num">${i + 1}</span>
@@ -687,13 +696,14 @@ function atualizarAmb() {
 }
 
 // ───────────────────────── Planta baixa ─────────────────────────
-const NOMES_PAREDE = { cima: 'de cima', baixo: 'de baixo', esq: 'da esquerda', dir: 'da direita' };
-const SETA = { cima: '↑', baixo: '↓', esq: '←', dir: '→' };
-const rotuloCanto = (parede, canto) => Planta.HORIZ(parede)
-  ? (canto === 'fim' ? 'Do canto direito' : 'Do canto esquerdo')
-  : (canto === 'fim' ? 'Do canto de cima' : 'Do canto de baixo');
-const rotulosAte = f => Planta.HORIZ(f) ? ['Até o canto esquerdo', 'Até o canto direito'] : ['Até o canto de baixo', 'Até o canto de cima'];
-const rotulosLado = f => Planta.HORIZ(f) ? ['Esquerda', 'Direita'] : ['Embaixo', 'Em cima'];
+const letra = k => Planta.letra(k);
+/** Letras dos cantos de cada parede de um ambiente: [início, fim]. */
+function cantosDe(a, k) {
+  const f = Planta.formaLocal(a), n = f.verts.length;
+  return [letra(k), letra(f.fechado ? (k + 1) % n : k + 1)];
+}
+const nomeParede = (a, k) => { const [x, y] = cantosDe(a, k); return `${x}–${y}`; };
+const paredesDoAmb = a => { const f = Planta.formaLocal(a); return Planta.paredesDe(f.verts, f.fechado, f.sentido); };
 const nomeModelo = m => (Planta.MODELOS.find(x => x[0] === m) || [0, 'Porta'])[1];
 const MODELOS_PORTA = Planta.MODELOS.filter(m => !Planta.ehJanela(m[0]));
 const MODELOS_JANELA = Planta.MODELOS.filter(m => Planta.ehJanela(m[0]));
@@ -702,6 +712,14 @@ const vnum = n => n == null || !Number.isFinite(n) ? '' : String(r2(n)).replace(
 /** Número para mostrar nos campos do painel (sempre 2 casas). */
 const vexib = n => n == null || !Number.isFinite(n) ? '' : n.toFixed(2).replace('.', ',');
 const ICONE_ENQUADRAR = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>';
+/** Ângulo arredondado de 5 em 5 graus; perto do esquadro, fica no esquadro. */
+function arredAng(g, volta = true) {
+  if (volta) g = ((g % 360) + 360) % 360;
+  const q = Math.round(g / 90) * 90;
+  const r = Math.abs(g - q) <= 4 ? q : Math.round(g / 5) * 5;
+  return volta ? r % 360 : r;
+}
+const arredMedida = m => Math.max(0.05, Math.round(m / 0.05) * 0.05);
 
 const ambPorId = (L, id) => L.ambientes.find(a => a.id === id);
 function estaLigado(L, a) {
@@ -712,16 +730,16 @@ function dependentes(L, a) {
   return L.portas.filter(p => p.ambA === a.id && p.ambB)
     .map(p => L.ambientes.find(x => x.id === p.ambB && x.ancora === p.id)).filter(Boolean);
 }
-async function excluirAmbiente(L, a) {
+async function excluirAmbiente(L, a, perguntar = true) {
   const dep = dependentes(L, a);
   if (dep.length) {
     alert(`Antes, exclua o que foi desenhado a partir das portas de ${tituloAmb(a)}: ${dep.map(tituloAmb).join(', ')}.`);
     return false;
   }
-  if (!confirm(`Excluir o ambiente ${tituloAmb(a)} e as fotos dele?`)) return false;
+  if (perguntar && !confirm(`Excluir o ambiente ${tituloAmb(a)} e as fotos dele?`)) return false;
   await apagarFotos(fotosDoAmb(a));
   L.portas = L.portas.filter(p => p.ambA !== a.id);
-  for (const p of L.portas) if (p.ambB === a.id) { p.ambB = null; p.bonecaB = ''; p.cantoB = 'ini'; }
+  for (const p of L.portas) if (p.ambB === a.id) { p.ambB = null; p.bonecaB = ''; p.cantoB = 'ini'; p.paredeB = 0; }
   L.ambientes = L.ambientes.filter(x => x !== a);
   if (ctx.sel === a.id) { ctx.sel = null; ctx.item = null; }
   if (ctx.amb === a) ctx.amb = null;
@@ -759,6 +777,11 @@ function iniciarPlanta() {
   const el = $('#planta');
   if (!el) return;
   ligarGestos(el);
+  // um desenho interrompido (página recarregada, app fechado) continua de onde parou
+  if (!ctx.desenho) {
+    const a = ctx.lev.ambientes.find(x => x.desenhando);
+    if (a) { ctx.desenho = { amb: a.id, porta: a.ancora || null }; ctx.pavPlanta = a.pavimentoId; ctx.sel = a.id; }
+  }
   desenharPlanta();
 }
 
@@ -767,7 +790,10 @@ function tamanhoSvg(el) {
   el.setAttribute('viewBox', `0 0 ${W} ${H}`);
   return [W, H];
 }
-const opcoesPlanta = () => ({ sel: ctx.sel, item: ctx.item, mais: true, toque: true });
+function opcoesPlanta() {
+  const d = ctx.desenho, a = d && ambPorId(ctx.lev, d.amb);
+  return { sel: ctx.sel, item: ctx.item, mais: !d, toque: !d, desenho: a && (a.pos || a.ancora) ? a.id : null };
+}
 
 function desenharPlanta() {
   const L = ctx.lev, el = $('#planta');
@@ -777,14 +803,17 @@ function desenharPlanta() {
   if (ctx.sel && !lay.pos.has(ctx.sel)) { ctx.sel = null; ctx.item = null; }
   if (ctx.item && !Planta.infoItem(lay, ctx.item)) ctx.item = null;
   const [W, H] = tamanhoSvg(el);
-  if (!lay.pos.size) { delete ctx.views[pav]; el.innerHTML = ''; painelPlanta(lay); return; }
+  el.classList.toggle('desenhando', !!ctx.desenho);
+  const temDesenho = [...lay.pos.values()].some(R => R.verts.length > 1);
+  if (!temDesenho && !ctx.desenho) { delete ctx.views[pav]; el.innerHTML = ''; painelPlanta(lay); return; }
+  if (!temDesenho && !ctx.views[pav]) ctx.views[pav] = { s: 40, ox: W / 2, oy: H / 2 };
   const v0 = ctx.views[pav];
   // reenquadra quando pedido ou quando o ambiente recém-salvo (ou o "+" das portas dele) ficaria fora da tela
-  const r = ctx.verSel && ctx.sel && lay.pos.get(ctx.sel);
+  const R0 = ctx.verSel && ctx.sel && lay.pos.get(ctx.sel);
   ctx.verSel = false;
-  const fora = v0 && r && (v0.ox + (r.x - 0.8) * v0.s < 0 || v0.ox + (r.x + r.dx + 0.8) * v0.s > W ||
-    v0.oy - (r.y + r.dy + 0.8) * v0.s < 0 || v0.oy - (r.y - 0.8) * v0.s > H);
-  if (!v0 || ctx.focar || fora) { ctx.views[pav] = Planta.enquadrar(lay, W, H); ctx.focar = null; }
+  const fora = v0 && R0 && (v0.ox + (R0.bbox.x0 - 0.8) * v0.s < 0 || v0.ox + (R0.bbox.x1 + 0.8) * v0.s > W ||
+    v0.oy - (R0.bbox.y1 + 0.8) * v0.s < 0 || v0.oy - (R0.bbox.y0 - 0.8) * v0.s > H);
+  if ((!v0 || ctx.focar || fora) && temDesenho) { ctx.views[pav] = Planta.enquadrar(lay, W, H); ctx.focar = null; }
   if (ctx.verItem) {
     // centraliza o item recém-selecionado se ele ficou fora da área visível (o painel ocupa parte da tela)
     ctx.verItem = false;
@@ -811,13 +840,19 @@ function agendarPlanta() {
 }
 
 // ── Painel de baixo ──
+const botoesNovo = (primeiro) => `<div class="pl-acoes g2">
+    <button class="btn ${primeiro ? 'btn-primary' : 'btn-ghost'}" data-acao="pl-novo-raiz">${primeiro ? 'Retângulo' : '+ Retângulo solto'}</button>
+    <button class="btn ${primeiro ? 'btn-primary' : 'btn-ghost'}" data-acao="pl-desenhar">${primeiro ? 'Desenhar parede a parede' : '+ Desenhar solto'}</button>
+  </div>`;
+
 function painelPlanta(lay) {
   const L = ctx.lev, pav = pavAtual(L), p = $('#pl-painel');
   if (!p) return;
+  if (ctx.desenho) { p.innerHTML = painelDesenho(); return; }
   if (!lay.pos.size) {
     p.innerHTML = `<div class="pl-vazio">
-      <p>Comece pelo ambiente onde você está. Informe as medidas internas; depois inclua as portas e, pelo <b>+</b> de cada porta, desenhe o ambiente do outro lado.</p>
-      <button class="btn btn-primary" data-acao="pl-novo-raiz">Desenhar o primeiro ambiente</button></div>`;
+      <p>Comece pelo ambiente onde você está. Se ele for retangular, informe comprimento e largura. Se não for, desenhe: toque em cada canto e ajuste a medida e o ângulo de cada parede.</p>
+      ${botoesNovo(true)}</div>`;
     return;
   }
   const avisos = Planta.conferir(L, pav, lay).map(x => `<div class="alerta">${h(x)}</div>`).join('');
@@ -831,15 +866,16 @@ function painelPlanta(lay) {
   if (!a) {
     p.innerHTML = `${avisos}
       <p class="dica">Toque num ambiente para incluir porta ou objeto, ou numa parede para medir o trecho e inserir porta, janela ou ponto naquele lugar. Toque no <b>+</b> de uma porta para desenhar o ambiente do outro lado.</p>
-      <div class="fc-row"><button class="btn btn-ghost" data-acao="pl-novo-raiz">+ Ambiente sem ligação</button></div>`;
+      ${botoesNovo(false)}`;
     return;
   }
-  const c = calc(a);
+  const c = calc(a), R = lay.pos.get(a.id);
   const portas = L.portas.filter(x => x.ambA === a.id || x.ambB === a.id);
+  const formaTxt = a.forma === 'poli' ? `${R ? R.walls.length : '?'} paredes` : `${fmt(num(a.comp))} × ${fmt(num(a.larg))} m`;
   p.innerHTML = `${avisos}
     <div class="pl-sel">
       <div class="pl-sel-t"><b class="num">${h(a.codigo)}</b> ${h(a.nome || '(sem nome)')}</div>
-      <div class="pl-sel-s num">${fmt(num(a.comp))} × ${fmt(num(a.larg))} m · ${fmt(c.area)} m²${num(a.nivel) ? ' · NV ' + Planta.fmtNivel(num(a.nivel)) : ''}</div>
+      <div class="pl-sel-s num">${formaTxt} · ${fmt(c.area)} m²${num(a.nivel) ? ' · NV ' + Planta.fmtNivel(num(a.nivel)) : ''}</div>
     </div>
     <div class="pl-acoes g4">
       <button class="btn btn-primary" data-acao="pl-nova-porta">+ Porta</button>
@@ -850,15 +886,15 @@ function painelPlanta(lay) {
     ${portas.length ? `<div class="seg pl-portas">${portas.map(x => {
       const deA = x.ambA === a.id;
       const outro = ambPorId(L, deA ? x.ambB : x.ambA);
-      const parede = deA ? x.parede : Planta.OPOSTA[x.parede];
-      return `<button class="chip off" data-acao="pl-sel-porta" data-id="${h(x.id)}">${h(nomeModelo(x.modelo))} ${SETA[parede]} ${fmt(num(x.largura))}${outro ? ' · ' + h(outro.codigo) : ''}</button>`;
+      const par = deA ? nomeParede(a, +x.parede) : nomeParede(a, +x.paredeB || 0);
+      return `<button class="chip off" data-acao="pl-sel-porta" data-id="${h(x.id)}">${h(nomeModelo(x.modelo))} ${par} · ${fmt(num(x.largura))}${outro ? ' · ' + h(outro.codigo) : ''}</button>`;
     }).join('')}</div>` : '<p class="dica">Sem portas ainda. Toque numa parede ou em <b>+ Porta</b>.</p>'}`;
 }
 
-function campoPe(rot, k, val, { numero = true, dica = '', extra = '' } = {}) {
+function campoPe(rot, k, val, { numero = true, dica = '', extra = '', attr = 'data-pe' } = {}) {
   const id = fid();
   return `<div class="field${numero ? ' num' : ''}"><label for="${id}">${h(rot)}</label>
-    <input id="${id}" class="input" data-pe="${k}" value="${h(val ?? '')}" autocomplete="off" ${numero ? 'inputmode="decimal" enterkeyhint="done"' : ''} ${extra}>
+    <input id="${id}" class="input" ${attr}="${k}" value="${h(val ?? '')}" autocomplete="off" ${numero ? 'inputmode="decimal" enterkeyhint="done"' : ''} ${extra}>
     ${dica ? `<div class="dica">${dica}</div>` : ''}</div>`;
 }
 const opcoesPe = (k, atual, lista) => `<div class="seg">${lista.map(([v, t]) =>
@@ -869,12 +905,14 @@ function painelItem(lay) {
   if (!info) return '';
   const vv = info.valores;
   if (it.tipo === 'seg') {
-    const a = ambPorId(L, it.amb);
-    const desc = !info.vE && !info.vD ? 'Parede inteira: mudar aqui muda a medida do ambiente.'
-      : !info.vE || !info.vD ? `Do canto até a ${info.vE ? (info.vE.g.janela ? 'janela' : 'porta') : (info.vD.g.janela ? 'janela' : 'porta')} (a boneca): mudar aqui ${(info.vE || info.vD).lado === 'A' ? 'move a abertura' : 'move este ambiente'}.`
+    const a = ambPorId(L, it.amb), ab = info.vE || info.vD;
+    const fechamento = a.forma === 'poli' && it.k >= (a.paredes || []).length;
+    const desc = !info.vE && !info.vD
+      ? (fechamento ? 'Parede de fechamento: é calculada pelas outras. Para mudar, ajuste as outras paredes ou os ângulos.' : 'Parede inteira: mudar aqui muda a medida do ambiente.')
+      : !info.vE || !info.vD ? `Do canto até a ${ab.g.janela ? 'janela' : 'porta'} (a boneca): mudar aqui ${ab.lado === 'A' ? 'move a abertura' : 'move este ambiente'}.`
         : 'Trecho entre duas aberturas.';
-    return `<div class="pl-sel"><div class="pl-sel-t">Parede ${NOMES_PAREDE[it.face]} de <b class="num">${h(a.codigo)}</b></div></div>
-      ${campoPe('Comprimento deste trecho (m)', 'trecho', vexib(vv.trecho), { dica: desc })}
+    return `<div class="pl-sel"><div class="pl-sel-t">Parede ${nomeParede(a, it.k)} de <b class="num">${h(a.codigo)}</b></div></div>
+      ${campoPe('Comprimento deste trecho (m)', 'trecho', vexib(vv.trecho), { dica: desc, extra: fechamento && !ab ? 'readonly' : '' })}
       <span class="fc-label">Inserir neste ponto da parede</span>
       <div class="pl-acoes g4">
         <button class="btn btn-primary" data-acao="ins" data-v="porta">Porta</button>
@@ -885,16 +923,16 @@ function painelItem(lay) {
   }
   if (it.tipo === 'porta') {
     const p = info.g.p, A = ambPorId(L, p.ambA), B = p.ambB && ambPorId(L, p.ambB), jan = Planta.ehJanela(p.modelo);
-    const [rE, rD] = rotulosAte(p.parede), lados = rotulosLado(p.parede);
+    const [cI, cF] = cantosDe(A, +p.parede);
     const titulo = jan ? `${nomeModelo(p.modelo)} em ${A.codigo}` : B ? `Porta ${A.codigo} ↔ ${B.codigo}` : `Porta em ${A.codigo}`;
     let opc = '';
     if (!jan && p.modelo !== 'vao') {
       opc += `<div class="field"><span class="fc-label">Abre para</span>${opcoesPe('abre', p.abre, [['dentro', `Dentro de ${A.codigo}`], ['fora', B ? `Dentro de ${B.codigo}` : 'Fora']])}</div>`;
-      if (p.modelo === 'giro') opc += `<div class="field"><span class="fc-label">Dobradiça</span>${opcoesPe('lado', p.lado, [['ini', lados[0]], ['fim', lados[1]]])}</div>`;
-      if (p.modelo === 'correr') opc += `<div class="field"><span class="fc-label">Corre para</span>${opcoesPe('lado', p.lado, [['ini', lados[0]], ['fim', lados[1]]])}</div>`;
+      if (p.modelo === 'giro') opc += `<div class="field"><span class="fc-label">Dobradiça</span>${opcoesPe('lado', p.lado, [['ini', `Lado do canto ${cI}`], ['fim', `Lado do canto ${cF}`]])}</div>`;
+      if (p.modelo === 'correr') opc += `<div class="field"><span class="fc-label">Corre para</span>${opcoesPe('lado', p.lado, [['ini', `O canto ${cI}`], ['fim', `O canto ${cF}`]])}</div>`;
     }
-    return `<div class="pl-sel"><div class="pl-sel-t">${h(titulo)}</div><div class="pl-sel-s">Parede ${NOMES_PAREDE[p.parede]} de ${h(A.codigo)}. Toque numa cota para editar.</div></div>
-      <div class="grid2">${campoPe(rE, 'esq', vexib(vv.esq))}${campoPe(rD, 'dir', vexib(vv.dir))}</div>
+    return `<div class="pl-sel"><div class="pl-sel-t">${h(titulo)}</div><div class="pl-sel-s">Parede ${cI}–${cF} de ${h(A.codigo)}. Toque numa cota para editar.</div></div>
+      <div class="grid2">${campoPe(`Até o canto ${cI}`, 'esq', vexib(vv.esq))}${campoPe(`Até o canto ${cF}`, 'dir', vexib(vv.dir))}</div>
       <div class="${jan ? 'grid3' : 'grid2'}">${campoPe('Largura (m)', 'larg', vexib(vv.larg))}${campoPe('Altura (m)', 'alt', p.altura)}${jan ? campoPe('Peitoril (m)', 'peit', p.peitoril) : ''}</div>
       <div class="field"><span class="fc-label">Modelo</span>${opcoesPe('modelo', p.modelo, jan ? MODELOS_JANELA : MODELOS_PORTA)}</div>
       ${opc}
@@ -905,9 +943,9 @@ function painelItem(lay) {
       </div>`;
   }
   if (it.tipo === 'ponto') {
-    const pt = info.pt, a = ambPorId(L, it.amb), [rE, rD] = rotulosAte(pt.face), idT = fid();
-    return `<div class="pl-sel"><div class="pl-sel-t"><b>${h(pt.cod)}</b> ${h(pt.i.tipo)}</div><div class="pl-sel-s">Parede ${NOMES_PAREDE[pt.face]} de ${h(a.codigo)}. Cotas até o centro do ponto.</div></div>
-      <div class="grid2">${campoPe(rE, 'esq', vexib(vv.esq))}${campoPe(rD, 'dir', vexib(vv.dir))}</div>
+    const pt = info.pt, a = ambPorId(L, it.amb), [cI, cF] = cantosDe(a, +pt.i.parede), idT = fid();
+    return `<div class="pl-sel"><div class="pl-sel-t"><b>${h(pt.cod)}</b> ${h(pt.i.tipo)}</div><div class="pl-sel-s">Parede ${cI}–${cF} de ${h(a.codigo)}. Cotas até o centro do ponto.</div></div>
+      <div class="grid2">${campoPe(`Até o canto ${cI}`, 'esq', vexib(vv.esq))}${campoPe(`Até o canto ${cF}`, 'dir', vexib(vv.dir))}</div>
       <div class="field"><label for="${idT}">Tipo</label><select id="${idT}" class="input" data-pe="tipo">${Object.keys(Planta.PONTOS).map(t => `<option${t === pt.i.tipo ? ' selected' : ''}>${h(t)}</option>`).join('')}</select></div>
       <div class="grid2">${campoPe('Altura do piso (m)', 'altura', pt.i.altura)}${campoPe('Quantidade', 'qtd', pt.i.qtd, { extra: 'inputmode="numeric"' })}</div>
       <div class="pl-acoes g2">
@@ -917,16 +955,18 @@ function painelItem(lay) {
   }
   if (it.tipo === 'obj') {
     const ob = info.obj, o = ob.o, b = ob.b, a = ambPorId(L, it.amb);
+    const cotas = Object.keys(vv).map(k => campoPe(`Até a parede ${nomeParede(a, +k.slice(1))}`, k, vexib(vv[k]))).join('');
     const medidas = o.tipo === 'desnivel'
       ? `<div class="grid3">${campoPe('Largura (m)', 'w', o.w || vnum(b.w))}${campoPe('Profund. (m)', 'd', o.d || vnum(b.d))}${campoPe('Nível (m)', 'nivel', o.nivel, { extra: 'placeholder="+0,17"' })}</div>
          <p class="dica">Nível do patamar ou rebaixo, na mesma referência do nível do piso dos ambientes.</p>`
       : `<div class="grid3">${campoPe('Largura (m)', 'w', o.w || vnum(b.w))}${campoPe('Profund. (m)', 'd', o.d || vnum(b.d))}${o.tipo === 'pilar' ? '' : campoPe('Altura (m)', 'h', o.h || vnum(b.h))}</div>`;
-    return `<div class="pl-sel"><div class="pl-sel-t">${h(b.nome)} · <b class="num">${h(a.codigo)}</b></div><div class="pl-sel-s">Cotas até as paredes. Toque numa cota para editar.</div></div>
-      <div class="grid2">${campoPe('Até a parede da esquerda', 'esq', vexib(vv.esq))}${campoPe('Até a parede da direita', 'dir', vexib(vv.dir))}</div>
-      <div class="grid2">${campoPe('Até a parede de baixo', 'baixo', vexib(vv.baixo))}${campoPe('Até a parede de cima', 'cima', vexib(vv.cima))}</div>
+    return `<div class="pl-sel"><div class="pl-sel-t">${h(b.nome)} · <b class="num">${h(a.codigo)}</b></div><div class="pl-sel-s">Cotas até as paredes mais próximas. Toque numa cota para editar.</div></div>
+      ${cotas ? `<div class="grid2">${cotas}</div>` : ''}
       ${medidas}
+      <div class="grid2">${campoPe('Rotação (graus)', 'rot', vnum(num(o.rot) || 0))}
+        <div class="field"><span class="fc-label">&nbsp;</span><button class="btn btn-ghost" data-acao="pe-girar">Girar 90°</button></div></div>
       <div class="pl-acoes g2">
-        <button class="btn btn-ghost" data-acao="pe-girar">Girar 90°</button>
+        <span></span>
         <button class="btn btn-ghost perigo" data-acao="pe-excluir">Excluir</button>
       </div>`;
   }
@@ -962,31 +1002,37 @@ function aplicarPe(k, val) {
   } else if (it.tipo === 'ponto') {
     const i = info.pt.i;
     if (k === 'esq') i.pos = val;
-    else if (k === 'dir') { if (v != null) i.pos = vnum(info.F.u1 - info.F.u0 - v); }
+    else if (k === 'dir') { if (v != null) i.pos = vnum(info.W.len - v); }
     else i[k] = val;
   } else if (it.tipo === 'obj') {
-    const ob = info.obj, o = ob.o, r = lay.pos.get(it.amb);
-    if (k === 'esq' && v != null) o.x = r2(v);
-    else if (k === 'dir' && v != null) o.x = r2(r.dx - v - ob.bw);
-    else if (k === 'baixo' && v != null) o.y = r2(v);
-    else if (k === 'cima' && v != null) o.y = r2(r.dy - v - ob.bh);
-    else if (['w', 'd', 'h', 'nivel'].includes(k)) o[k] = val;
+    const o = info.obj.o;
+    if (k in info.valores) {
+      if (v == null) return;
+      // anda na perpendicular da parede escolhida
+      const W = info.paredes[k], dlt = v - info.valores[k];
+      const local = rotacionar([W.nIn[0] * dlt, W.nIn[1] * dlt], -info.R.rot);
+      o.cx = r2((num(o.cx) || 0) + local[0]);
+      o.cy = r2((num(o.cy) || 0) + local[1]);
+    } else if (['w', 'd', 'h', 'nivel', 'rot'].includes(k)) o[k] = val;
   } else if (it.tipo === 'seg') {
     if (v == null || v < 0) return;
-    const a = ambPorId(L, it.amb), { vE, vD, F } = info;
+    const a = ambPorId(L, it.amb), { vE, vD, W } = info;
     const pos = (x, canto, valor) => {
       const p = x.g.p;
       if (x.lado === 'A') { p.canto = canto; p.boneca = vnum(valor); } else { p.cantoB = canto; p.bonecaB = vnum(valor); }
     };
-    if (!vE && !vD) { if (Planta.HORIZ(it.face)) a.comp = val; else a.larg = val; }
-    else if (!vE) pos(vD, 'ini', v);
+    if (!vE && !vD) {
+      if (a.forma === 'poli') { if (it.k < a.paredes.length) a.paredes[it.k].c = val; }
+      else if (it.k % 2 === 0) a.comp = val; else a.larg = val;
+    } else if (!vE) pos(vD, 'ini', v);
     else if (!vD) pos(vE, 'fim', v);
-    else if (vD.lado === 'A') pos(vD, 'ini', vE.ub - F.u0 + v);
-    else if (vE.lado === 'A') pos(vE, 'fim', F.u1 - vD.ua + v);
+    else if (vD.lado === 'A') pos(vD, 'ini', vE.ub + v);
+    else if (vE.lado === 'A') pos(vE, 'fim', W.len - vD.ua + v);
     else return toast('Este trecho fica entre duas portas medidas no outro ambiente. Edite pelas portas.');
   }
   salvarDepois();
 }
+const rotacionar = (p, r) => [p[0] * Math.cos(r) - p[1] * Math.sin(r), p[0] * Math.sin(r) + p[1] * Math.cos(r)];
 
 /** Atualiza os campos do painel que dependem do que foi editado (sem mexer no campo em uso). */
 function sincronizarPainel(ativo) {
@@ -1003,8 +1049,8 @@ function pontoDoItem(lay, item) {
   if (!info) return null;
   if (item.tipo === 'porta') return [(info.g.x1 + info.g.x2) / 2, (info.g.y1 + info.g.y2) / 2];
   if (item.tipo === 'ponto') return [info.pt.cx, info.pt.cy];
-  if (item.tipo === 'obj') return [info.obj.x0 + info.obj.bw / 2, info.obj.y0 + info.obj.bh / 2];
-  if (item.tipo === 'seg') return info.F.pt((info.u0 + info.u1) / 2);
+  if (item.tipo === 'obj') return info.obj.centro;
+  if (item.tipo === 'seg') return Planta.ptW(info.W, (info.u0 + info.u1) / 2);
   return null;
 }
 
@@ -1023,10 +1069,10 @@ function inserirAbertura(tipo) {
   const [larg, alt, peit] = Planta.PADRAO_ABERTURA[modelo];
   const w = num(larg);
   const meio = it.uToque ?? (info.u0 + info.u1) / 2;
-  const u = Math.max(info.u0, Math.min(meio - w / 2, info.u1 - w));
+  const s = Math.max(info.u0, Math.min(meio - w / 2, info.u1 - w));
   const p = {
-    id: uid(), ambA: it.amb, parede: it.face, modelo, largura: larg, altura: alt, peitoril: peit, abre: 'dentro', lado: 'ini',
-    boneca: vnum(u - info.F.u0), canto: 'ini', espessura: ls.get('espessura', '0,15'), ambB: null, bonecaB: '', cantoB: 'ini',
+    id: uid(), ambA: it.amb, parede: it.k, modelo, largura: larg, altura: alt, peitoril: peit, abre: 'dentro', lado: 'ini',
+    boneca: vnum(s), canto: 'ini', espessura: ls.get('espessura', '0,15'), ambB: null, paredeB: 0, bonecaB: '', cantoB: 'ini',
   };
   L.portas.push(p);
   salvarDepois();
@@ -1037,33 +1083,29 @@ function inserirPonto(tipo) {
   const L = ctx.lev, base = ctx.escolha && ctx.escolha.base, lay = Planta.layout(L, pavAtual(L)), info = Planta.infoItem(lay, base);
   if (!info) { ctx.escolha = null; return desenharPlanta(); }
   const a = ambPorId(L, base.amb);
-  const u = base.uToque ?? (info.u0 + info.u1) / 2;
-  const i = { id: uid(), tipo, qtd: '1', comp: '', altura: Planta.PONTOS[tipo][1], local: '', fotos: [], parede: base.face, pos: vnum(u - info.F.u0) };
+  const s = base.uToque ?? (info.u0 + info.u1) / 2;
+  const i = { id: uid(), tipo, qtd: '1', comp: '', altura: Planta.PONTOS[tipo][1], local: '', fotos: [], parede: base.k, pos: vnum(s) };
   a.inst.push(i);
   salvarDepois();
   selecionar({ tipo: 'ponto', amb: a.id, id: i.id }, a.id);
 }
 
 function inserirObjeto(tipo) {
-  const L = ctx.lev, e = ctx.escolha, lay = Planta.layout(L, pavAtual(L));
-  const b = Planta.BIBLIOTECA[tipo], amb = e.base ? e.base.amb : ctx.sel, a = ambPorId(L, amb), r = lay.pos.get(amb);
-  if (!a || !r) { ctx.escolha = null; return desenharPlanta(); }
-  const o = { id: uid(), tipo, x: 0, y: 0, w: '', d: '', h: '', rot: 0, nivel: tipo === 'desnivel' ? vnum((num(a.nivel) || 0) + 0.17) : '' };
-  const info = e.base && Planta.infoItem(lay, e.base);
-  if (info) {
-    // encosta a parte de trás do objeto na parede tocada
-    const f = e.base.face;
-    o.rot = { baixo: 0, cima: 180, esq: 270, dir: 90 }[f];
-    const bw = o.rot % 180 ? b.d : b.w, bh = o.rot % 180 ? b.w : b.d;
-    const ao = Planta.HORIZ(f) ? bw : bh, len = info.F.u1 - info.F.u0;
-    const u = Math.max(0, Math.min((e.base.uToque ?? (info.u0 + info.u1) / 2) - info.F.u0 - ao / 2, len - ao));
-    if (f === 'baixo') { o.x = r2(u); o.y = 0; }
-    else if (f === 'cima') { o.x = r2(u); o.y = r2(r.dy - bh); }
-    else if (f === 'esq') { o.x = 0; o.y = r2(u); }
-    else { o.x = r2(r.dx - bw); o.y = r2(u); }
+  const L = ctx.lev, e = ctx.escolha;
+  const b = Planta.BIBLIOTECA[tipo], amb = e.base ? e.base.amb : ctx.sel, a = ambPorId(L, amb);
+  if (!a) { ctx.escolha = null; return desenharPlanta(); }
+  const o = { id: uid(), tipo, cx: 0, cy: 0, w: '', d: '', h: '', rot: 0, nivel: tipo === 'desnivel' ? vnum((num(a.nivel) || 0) + 0.17) : '' };
+  const ws = paredesDoAmb(a), W = e.base && ws[e.base.k];
+  if (W) {
+    // encosta a parte de trás do objeto na parede tocada (sistema do ambiente)
+    const s = Math.max(b.w / 2, Math.min((e.base.uToque ?? W.len / 2), W.len - b.w / 2));
+    const c = Planta.ptW(W, s, b.d / 2 + 0.005);
+    o.cx = r2(c[0]); o.cy = r2(c[1]);
+    o.rot = Math.round(Math.atan2(-W.nIn[0], W.nIn[1]) / Planta.RAD);
   } else {
-    o.x = r2(Math.max(0, (r.dx - b.w) / 2));
-    o.y = r2(Math.max(0, (r.dy - b.d) / 2));
+    const f = Planta.formaLocal(a);
+    const c = f.verts.reduce((s, p) => [s[0] + p[0] / f.verts.length, s[1] + p[1] / f.verts.length], [0, 0]);
+    o.cx = r2(c[0]); o.cy = r2(c[1]);
   }
   a.objetos.push(o);
   salvarDepois();
@@ -1094,14 +1136,126 @@ async function excluirItem() {
 }
 
 function girarObjeto() {
-  const L = ctx.lev, lay = Planta.layout(L, pavAtual(L)), info = Planta.infoItem(lay, ctx.item);
-  if (!info || ctx.item.tipo !== 'obj') return;
-  const ob = info.obj, o = ob.o, r = lay.pos.get(ctx.item.amb);
-  const cx = ob.x0 - r.x + ob.bw / 2, cy = ob.y0 - r.y + ob.bh / 2;   // gira em torno do centro
-  o.rot = ((+o.rot || 0) + 90) % 360;
-  o.x = r2(cx - ob.bh / 2);
-  o.y = r2(cy - ob.bw / 2);
+  const a = ctx.item && ambPorId(ctx.lev, ctx.item.amb), o = a && a.objetos.find(x => x.id === ctx.item.id);
+  if (!o) return;
+  o.rot = ((num(o.rot) || 0) + 90) % 360;
   salvarDepois();
+  desenharPlanta();
+}
+
+// ── Desenho parede a parede ──
+/** Começa um ambiente desenhado. porta: quando ele nasce do "+" de uma porta (a 1ª parede é a da porta). */
+function iniciarDesenho({ porta = null, nome = '', ladoPorta = '', bonecaB = '', cantoB = 'ini', nivel = '' } = {}) {
+  const L = ctx.lev, pav = pavAtual(L);
+  const a = novoAmbiente(L, porta ? ambPorId(L, porta.ambA).pavimentoId : pav);
+  Object.assign(a, { forma: 'poli', paredes: [], desenhando: true, pos: null, rot: '0', nome, nivel });
+  if (porta) {
+    a.paredes.push({ c: ladoPorta });
+    a.ancora = porta.id;
+    Object.assign(porta, { ambB: a.id, paredeB: 0, bonecaB, cantoB });
+  }
+  L.ambientes.push(a);
+  ctx.desenho = { amb: a.id, porta: porta ? porta.id : null };
+  ctx.item = null;
+  ctx.escolha = null;
+  ctx.sel = a.id;
+  salvarDepois();
+  desenharPlanta();
+}
+
+function painelDesenho() {
+  const L = ctx.lev, a = ambPorId(L, ctx.desenho.amb);
+  if (!a) { ctx.desenho = null; return ''; }
+  const ps = a.paredes, n = ps.length;
+  const dica = !a.pos && !a.ancora ? 'Toque na planta onde fica o <b>canto A</b>.'
+    : n === 0 ? 'Toque no <b>canto B</b>. Depois ajuste a medida e a direção.'
+      : `Toque no próximo canto (<b>${letra(n + 1)}</b>) ou em <b>Fechar</b> quando faltar só a última parede.`;
+  const linhas = ps.map((p, k) => `<div class="dz-linha">
+      <span class="dz-par num">${letra(k)}–${letra(k + 1)}</span>
+      ${campoPe('Comprimento (m)', `c:${k}`, p.c, { attr: 'data-dz' })}
+      ${k === 0
+        ? (a.ancora ? '<div class="field"><span class="fc-label">Direção</span><span class="dica">a da porta</span></div>'
+          : campoPe('Direção (graus)', 'rot', a.rot, { attr: 'data-dz', dica: '0 = para a direita' }))
+        : campoPe(`Ângulo em ${letra(k)} (graus)`, `ang:${k}`, p.ang, { attr: 'data-dz', dica: 'interno; 90 = esquadro' })}
+    </div>`).join('');
+  return `<div class="pl-sel"><div class="pl-sel-t">Desenhando <b class="num">${h(a.codigo)}</b></div><div class="pl-sel-s">${dica}</div></div>
+    ${campoPe('Nome do ambiente', 'nome', a.nome, { numero: false, attr: 'data-dz', extra: 'placeholder="Ex.: Recepção" autocapitalize="sentences"' })}
+    ${linhas}
+    ${n >= 2 ? `<p class="dica">A última parede (${letra(n)}–A) é calculada ao fechar.</p>` : ''}
+    <div class="pl-acoes g3">
+      <button class="btn btn-ghost" data-acao="dz-desfazer"${n === 0 && !a.pos ? ' disabled' : ''}>Desfazer</button>
+      <button class="btn btn-ghost perigo" data-acao="dz-cancelar">Cancelar</button>
+      <button class="btn btn-primary" data-acao="dz-fechar"${n >= 2 ? '' : ' disabled'}>Fechar</button>
+    </div>`;
+}
+
+/** Toque na planta durante o desenho: marca o próximo canto. */
+function tocarDesenho(ev) {
+  const L = ctx.lev, a = ambPorId(L, ctx.desenho.amb), pav = pavAtual(L), v = ctx.views[pav];
+  if (!a || !v) return;
+  const r = $('#planta').getBoundingClientRect();
+  const P = [(ev.clientX - r.left - v.ox) / v.s, (v.oy - (ev.clientY - r.top)) / v.s];
+  if (!a.pos && !a.ancora) {
+    a.pos = { x: r2(P[0]), y: r2(P[1]) };
+  } else {
+    const R = Planta.layout(L, pav).pos.get(a.id);
+    if (!R) return;
+    const A0 = R.verts[0], ult = R.verts[R.verts.length - 1];
+    // tocar perto do canto A fecha o ambiente
+    if (a.paredes.length >= 2 && Math.hypot(P[0] - A0[0], P[1] - A0[1]) * v.s < 18) return fecharDesenho();
+    const d = [P[0] - ult[0], P[1] - ult[1]], c = Math.hypot(d[0], d[1]);
+    if (c < 0.05) return;
+    const rumo = Math.atan2(d[1], d[0]) / Planta.RAD;
+    if (a.paredes.length === 0) {
+      a.rot = String(arredAng(rumo));
+      a.paredes.push({ c: vnum(arredMedida(c)) });
+    } else {
+      const anterior = (R.rot + R.local.rumoFinal) / Planta.RAD;
+      let giro = rumo - anterior;
+      giro = ((giro + 540) % 360) - 180;                    // entre −180 e 180 (positivo = virou à esquerda)
+      // a primeira curva define o sentido: virar à esquerda = anti-horário (interior à esquerda)
+      if (a.paredes.length === 1 && !a.ancora) a.sentido = giro < 0 ? 'horario' : 'anti';
+      const sentido = a.sentido === 'horario' ? -1 : 1;
+      a.paredes.push({ c: vnum(arredMedida(c)), ang: String(arredAng(180 - sentido * giro, false)) });
+    }
+  }
+  salvarDepois();
+  desenharPlanta();
+  const ult = $$('#pl-painel [data-dz^="c:"]').pop();
+  if (ult) ult.scrollIntoView({ block: 'nearest' });
+}
+
+function aplicarDesenho(k, val) {
+  const a = ambPorId(ctx.lev, ctx.desenho.amb);
+  if (!a) return;
+  if (k === 'nome') a.nome = val;
+  else if (k === 'rot') a.rot = val;
+  else {
+    const [campo, i] = k.split(':');
+    if (a.paredes[+i]) a.paredes[+i][campo] = val;
+  }
+  salvarDepois();
+}
+
+function fecharDesenho() {
+  const L = ctx.lev, a = ambPorId(L, ctx.desenho.amb);
+  if (!a || a.paredes.length < 2) return;
+  delete a.desenhando;
+  ctx.desenho = null;
+  ctx.sel = a.id;
+  ctx.item = null;
+  ctx.verSel = true;
+  salvarDepois();
+  desenharPlanta();
+  const R = Planta.layout(L, pavAtual(L)).pos.get(a.id);
+  const W = R && R.walls[R.walls.length - 1];
+  if (W) toast(`Ambiente fechado. A última parede (${letra(W.k)}–A) ficou com ${fmt(W.len)} m. Se você mediu, informe em Medidas para conferir.`, 6000);
+}
+
+async function cancelarDesenho() {
+  const L = ctx.lev, a = ambPorId(L, ctx.desenho.amb);
+  ctx.desenho = null;
+  if (a) await excluirAmbiente(L, a, false);
   desenharPlanta();
 }
 
@@ -1160,6 +1314,7 @@ function ligarGestos(el) {
 }
 
 function tocarPlanta(t, ev) {
+  if (ctx.desenho) return tocarDesenho(ev);
   const L = ctx.lev;
   const de = sel => t.closest(sel);
   if (de('[data-mais]')) return abrirVizinho(de('[data-mais]').dataset.mais);
@@ -1172,11 +1327,12 @@ function tocarPlanta(t, ev) {
   if (de('[data-porta]')) { const p = L.portas.find(x => x.id === de('[data-porta]').dataset.porta); return selecionar({ tipo: 'porta', id: p.id }, p.ambA); }
   if (de('[data-obj]')) { const [amb, id] = de('[data-obj]').dataset.obj.split('|'); return selecionar({ tipo: 'obj', amb, id }, amb); }
   if (de('[data-seg]')) {
-    const [amb, f, u0, u1] = de('[data-seg]').dataset.seg.split('|');
-    const lay = Planta.layout(L, pavAtual(L)), item = Planta.segmentoEm(lay, amb, f, +u0, +u1);
+    const [amb, k, s0, s1] = de('[data-seg]').dataset.seg.split('|');
+    const lay = Planta.layout(L, pavAtual(L)), item = Planta.segmentoEm(lay, amb, +k, +s0, +s1);
     const v = ctx.views[pavAtual(L)], r = $('#planta').getBoundingClientRect();
-    const x = (ev.clientX - r.left - v.ox) / v.s, y = (v.oy - (ev.clientY - r.top)) / v.s;
-    item.uToque = Planta.HORIZ(f) ? x : y;
+    const P = [(ev.clientX - r.left - v.ox) / v.s, (v.oy - (ev.clientY - r.top)) / v.s];
+    const W = lay.pos.get(amb).walls[+k];
+    item.uToque = (P[0] - W.a[0]) * W.d[0] + (P[1] - W.a[1]) * W.d[1];
     return selecionar(item, amb);
   }
   const amb = de('[data-amb]');
@@ -1192,12 +1348,13 @@ function abrirAmbiente(id) {
   const L = ctx.lev;
   if (!id) {
     const temAmb = L.ambientes.some(a => a.pavimentoId === pavAtual(L));
-    return abrirDialogo({ tipo: 'amb', id: null, pav: pavAtual(L), titulo: temAmb ? 'Ambiente sem ligação' : 'Primeiro ambiente', v: { nome: '', comp: '', larg: '', nivel: '', peDireito: '' } });
+    return abrirDialogo({ tipo: 'amb', id: null, pav: pavAtual(L), titulo: temAmb ? 'Ambiente sem ligação' : 'Primeiro ambiente', v: { forma: 'ret', nome: '', comp: '', larg: '', nivel: '', peDireito: '' } });
   }
   const a = ambPorId(L, id);
   const p = a.ancora && L.portas.find(x => x.id === a.ancora && x.ambB === a.id);
-  const v = { nome: a.nome, nivel: a.nivel, peDireito: a.peDireito };
-  if (p) { const hz = Planta.HORIZ(p.parede); v.ladoPorta = hz ? a.comp : a.larg; v.prof = hz ? a.larg : a.comp; }
+  const v = { forma: a.forma === 'poli' ? 'poli' : 'ret', nome: a.nome, nivel: a.nivel, peDireito: a.peDireito, rot: a.rot || '0', fechamento: a.fechamento || '' };
+  if (v.forma === 'poli') v.paredes = clonar(a.paredes);
+  else if (p) { const par = (+p.paredeB || 0) % 2 === 0; v.ladoPorta = par ? a.comp : a.larg; v.prof = par ? a.larg : a.comp; }
   else { v.comp = a.comp; v.larg = a.larg; }
   abrirDialogo({ tipo: 'amb', id, pav: a.pavimentoId, ancora: p ? p.id : null, titulo: `${a.codigo}: medidas`, v });
 }
@@ -1206,8 +1363,9 @@ function abrirPorta(id) {
   if (!id) {
     const a = ambPorId(L, ctx.sel);
     if (!a) return;
-    const usadas = new Set(L.portas.filter(p => p.ambA === a.id).map(p => p.parede));
-    const parede = ['cima', 'dir', 'baixo', 'esq'].find(x => !usadas.has(x)) || 'cima';
+    const usadas = new Set(L.portas.filter(p => p.ambA === a.id).map(p => +p.parede));
+    const n = paredesDoAmb(a).length;
+    const parede = [...Array(n).keys()].find(k => !usadas.has(k)) ?? 0;
     return abrirDialogo({
       tipo: 'porta', id: null, novoId: uid(), ambA: a.id, pav: a.pavimentoId, titulo: `Nova porta em ${a.codigo}`,
       v: { parede, modelo: 'giro', abre: 'dentro', lado: 'ini', largura: '0,80', altura: '2,10', peitoril: '', boneca: '', canto: 'ini', espessura: ls.get('espessura', '0,15'), bonecaB: '', cantoB: 'ini' },
@@ -1218,7 +1376,7 @@ function abrirPorta(id) {
   abrirDialogo({
     tipo: 'porta', id, ambA: p.ambA, pav: A.pavimentoId, titulo: B ? `Porta ${A.codigo} ↔ ${B.codigo}` : `${nomeModelo(p.modelo)} em ${A.codigo}`,
     v: {
-      parede: p.parede, modelo: p.modelo, abre: p.abre, lado: p.lado, largura: p.largura, altura: p.altura, peitoril: p.peitoril,
+      parede: +p.parede, modelo: p.modelo, abre: p.abre, lado: p.lado, largura: p.largura, altura: p.altura, peitoril: p.peitoril,
       boneca: p.boneca, canto: p.canto, espessura: p.espessura, bonecaB: p.bonecaB, cantoB: p.cantoB,
     },
   });
@@ -1261,18 +1419,31 @@ function campoR(rot, k, val, { dica = '', extra = '', numero = false } = {}) {
     ${dica ? `<div class="dica">${dica}</div>` : ''}</div>`;
 }
 const opcoes = (k, atual, lista) => `<div class="seg">${lista.map(([v, t]) =>
-  `<button class="chip${atual === v ? '' : ' off'}" data-acao="dl-op" data-k="${k}" data-v="${v}">${h(t)}</button>`).join('')}</div>`;
+  `<button class="chip${String(atual) === String(v) ? '' : ' off'}" data-acao="dl-op" data-k="${k}" data-v="${v}">${h(t)}</button>`).join('')}</div>`;
 
 function formDialogo(r) {
   const L = ctx.lev, v = r.v;
   const niveis = `<div class="grid2">${campoR('Nível do piso (m)', 'nivel', v.nivel, { numero: true, extra: 'placeholder="±0,00"', dica: 'Use + ou − para desnível.' })}${campoR('Pé-direito (m)', 'peDireito', v.peDireito, { numero: true, extra: 'placeholder="2,80"', dica: 'Para a vista 3D.' })}</div>`;
   if (r.tipo === 'amb') {
-    const medidas = r.ancora
-      ? `<div class="grid2">${campoR('Parede da porta (m)', 'ladoPorta', v.ladoPorta, { numero: true })}${campoR('Profundidade (m)', 'prof', v.prof, { numero: true })}</div>`
-      : `<div class="grid2">${campoR('Comprimento ↔ (m)', 'comp', v.comp, { numero: true })}${campoR('Largura ↕ (m)', 'larg', v.larg, { numero: true })}</div>`;
+    let medidas;
+    if (v.forma === 'poli') {
+      medidas = v.paredes.map((p, k) => `<div class="dz-linha">
+          <span class="dz-par num">${letra(k)}–${letra(k + 1)}</span>
+          ${campoR('Comprimento (m)', `c:${k}`, p.c, { numero: true })}
+          ${k === 0 ? (r.ancora ? '<div class="field"><span class="fc-label">Direção</span><span class="dica">a da porta</span></div>'
+            : campoR('Direção (graus)', 'rot', v.rot, { numero: true, dica: '0 = para a direita' }))
+            : campoR(`Ângulo em ${letra(k)} (graus)`, `ang:${k}`, p.ang, { numero: true, dica: 'interno' })}
+        </div>`).join('') +
+        `<div class="fc-row"><button class="btn btn-ghost" data-acao="dl-parede-mais">+ Parede</button>${v.paredes.length > 2 ? '<button class="btn btn-ghost" data-acao="dl-parede-menos">− Última parede</button>' : ''}</div>
+        ${campoR(`Última parede (${letra(v.paredes.length)}–A) medida (m)`, 'fechamento', v.fechamento, { numero: true, dica: 'Opcional. É calculada; se você mediu, informe para conferir.' })}`;
+    } else {
+      medidas = r.ancora
+        ? `<div class="grid2">${campoR('Parede da porta (m)', 'ladoPorta', v.ladoPorta, { numero: true })}${campoR('Profundidade (m)', 'prof', v.prof, { numero: true })}</div>`
+        : `<div class="grid2">${campoR('Comprimento ↔ (m)', 'comp', v.comp, { numero: true })}${campoR('Largura ↕ (m)', 'larg', v.larg, { numero: true })}</div>`;
+      medidas += `<p class="dica">Medidas internas, de parede a parede.</p>${r.id ? '<button class="btn btn-ghost" data-acao="dl-virar-poli">Não é retângulo? Editar parede a parede</button>' : ''}`;
+    }
     return `${campoR('Nome do ambiente', 'nome', v.nome, { extra: 'placeholder="Ex.: Sala de reunião" autocapitalize="sentences"' })}
       ${medidas}
-      <p class="dica">Medidas internas, de parede a parede.</p>
       ${niveis}
       ${r.id ? '<button class="btn btn-ghost perigo" data-acao="dl-excluir-amb">Excluir ambiente</button>' : ''}`;
   }
@@ -1280,15 +1451,18 @@ function formDialogo(r) {
     const A = ambPorId(L, r.ambA);
     const p = r.id && L.portas.find(x => x.id === r.id);
     const B = p && p.ambB && ambPorId(L, p.ambB);
-    const jan = Planta.ehJanela(v.modelo), lados = rotulosLado(v.parede);
+    const jan = Planta.ehJanela(v.modelo);
+    const [cI, cF] = cantosDe(A, +v.parede);
     let opc = '';
     if (!jan && v.modelo !== 'vao') {
       opc += `<div class="field"><span class="fc-label">Abre para</span>${opcoes('abre', v.abre, [['dentro', `Dentro de ${A.codigo}`], ['fora', B ? `Dentro de ${B.codigo}` : 'Fora']])}</div>`;
-      if (v.modelo === 'giro') opc += `<div class="field"><span class="fc-label">Dobradiça</span>${opcoes('lado', v.lado, [['ini', lados[0]], ['fim', lados[1]]])}</div>`;
-      if (v.modelo === 'correr') opc += `<div class="field"><span class="fc-label">Corre para</span>${opcoes('lado', v.lado, [['ini', lados[0]], ['fim', lados[1]]])}</div>`;
+      if (v.modelo === 'giro') opc += `<div class="field"><span class="fc-label">Dobradiça</span>${opcoes('lado', v.lado, [['ini', `Lado do canto ${cI}`], ['fim', `Lado do canto ${cF}`]])}</div>`;
+      if (v.modelo === 'correr') opc += `<div class="field"><span class="fc-label">Corre para</span>${opcoes('lado', v.lado, [['ini', `O canto ${cI}`], ['fim', `O canto ${cF}`]])}</div>`;
     }
+    const nPar = paredesDoAmb(A).length;
+    const [bI, bF] = B ? cantosDe(B, +p.paredeB || 0) : ['', ''];
     return `<div class="field"><span class="fc-label">Parede de ${h(A.codigo)}${B ? ' (mudar a parede move ' + h(B.codigo) + ')' : ''}</span>
-        ${opcoes('parede', v.parede, ['cima', 'dir', 'baixo', 'esq'].map(x => [x, `${SETA[x]} ${NOMES_PAREDE[x].replace(/^d[aeo] /, '')}`]))}</div>
+        ${opcoes('parede', v.parede, [...Array(nPar).keys()].map(k => [k, nomeParede(A, k)]))}</div>
       <div class="field"><span class="fc-label">Modelo</span>${opcoes('modelo', v.modelo, B ? MODELOS_PORTA : Planta.MODELOS)}</div>
       <div class="grid2">
         ${campoR('Largura do vão (m)', 'largura', v.largura, { numero: true })}
@@ -1298,25 +1472,26 @@ function formDialogo(r) {
         ${campoR('Altura (m)', 'altura', v.altura, { numero: true })}
         ${jan ? campoR('Peitoril (m)', 'peitoril', v.peitoril, { numero: true, dica: 'Do piso até a janela.' }) : ''}
       </div>
-      ${campoR(`Boneca em ${A.codigo} (m)`, 'boneca', v.boneca, { numero: true, dica: `Do canto da parede até o batente, medida por dentro de ${h(A.codigo)}.` })}
-      ${opcoes('canto', v.canto, [['ini', rotuloCanto(v.parede, 'ini')], ['fim', rotuloCanto(v.parede, 'fim')]])}
+      ${campoR(`Boneca em ${A.codigo} (m)`, 'boneca', v.boneca, { numero: true, dica: `Do canto até o batente, medida por dentro de ${h(A.codigo)}.` })}
+      ${opcoes('canto', v.canto, [['ini', `Do canto ${cI}`], ['fim', `Do canto ${cF}`]])}
       ${opc}
       ${B ? `<hr class="sep">
-        ${campoR(`Boneca em ${B.codigo} (m)`, 'bonecaB', v.bonecaB, { numero: true, dica: `A mesma porta, medida por dentro de ${h(B.codigo)}.` })}
-        ${opcoes('cantoB', v.cantoB, [['ini', rotuloCanto(v.parede, 'ini')], ['fim', rotuloCanto(v.parede, 'fim')]])}` : ''}
+        ${campoR(`Boneca em ${B.codigo} (m)`, 'bonecaB', v.bonecaB, { numero: true, dica: `A mesma porta, medida por dentro de ${h(B.codigo)} (cantos de ${h(B.codigo)}).` })}
+        ${opcoes('cantoB', v.cantoB, [['ini', `Do canto ${bI}`], ['fim', `Do canto ${bF}`]])}` : ''}
       ${r.id ? `<button class="btn btn-ghost perigo" data-acao="dl-excluir-porta">Excluir ${jan ? 'janela' : 'porta'}</button>` : ''}`;
   }
   // vizinho
   const p = L.portas.find(x => x.id === r.portaId), A = ambPorId(L, p.ambA);
-  return `<p class="dica">Porta na parede ${NOMES_PAREDE[p.parede]} de <b>${h(A.codigo)}</b>, vão de ${fmt(num(p.largura))} m. Agora meça o ambiente do outro lado.</p>
+  return `<p class="dica">Porta na parede ${nomeParede(A, +p.parede)} de <b>${h(A.codigo)}</b>, vão de ${fmt(num(p.largura))} m. Agora meça o ambiente do outro lado. A parede da porta dele é a <b>A–B</b>.</p>
     ${campoR('Nome do ambiente', 'nome', v.nome, { extra: 'placeholder="Ex.: Copa" autocapitalize="sentences"' })}
     <div class="grid2">
-      ${campoR('Parede da porta (m)', 'ladoPorta', v.ladoPorta, { numero: true, dica: 'A parede onde está a porta.' })}
-      ${campoR('Profundidade (m)', 'prof', v.prof, { numero: true, dica: 'A outra medida.' })}
+      ${campoR('Parede da porta (m)', 'ladoPorta', v.ladoPorta, { numero: true, dica: 'A parede A–B, onde está a porta.' })}
+      ${campoR('Profundidade (m)', 'prof', v.prof, { numero: true, dica: 'Só se for retângulo.' })}
     </div>
     ${campoR('Boneca neste ambiente (m)', 'bonecaB', v.bonecaB, { numero: true, dica: 'Do canto até o batente da mesma porta, medida por dentro deste ambiente.' })}
-    ${opcoes('cantoB', v.cantoB, [['ini', rotuloCanto(p.parede, 'ini')], ['fim', rotuloCanto(p.parede, 'fim')]])}
-    ${campoR('Nível do piso (m)', 'nivel', v.nivel, { numero: true, extra: 'placeholder="±0,00"', dica: 'Se houver degrau na porta, informe a diferença aqui.' })}`;
+    ${opcoes('cantoB', v.cantoB, [['ini', 'Do canto A'], ['fim', 'Do canto B']])}
+    ${campoR('Nível do piso (m)', 'nivel', v.nivel, { numero: true, extra: 'placeholder="±0,00"', dica: 'Se houver degrau na porta, informe a diferença aqui.' })}
+    <button class="btn btn-ghost" data-acao="dl-viz-livre">Não é retângulo? Desenhar parede a parede</button>`;
 }
 
 /** Aplica o rascunho no levantamento L (o real ao salvar, ou uma cópia para a pré-visualização). */
@@ -1324,10 +1499,17 @@ function aplicar(L, r) {
   const v = r.v;
   const medidas = (a, ancora) => {
     const p = ancora && L.portas.find(x => x.id === ancora);
-    if (p && 'ladoPorta' in v) {
-      if (Planta.HORIZ(p.parede)) { a.comp = v.ladoPorta; a.larg = v.prof; } else { a.larg = v.ladoPorta; a.comp = v.prof; }
-    } else { a.comp = v.comp; a.larg = v.larg; }
-    a.forma = 'ret';
+    if (v.forma === 'poli') {
+      a.forma = 'poli';
+      a.paredes = clonar(v.paredes);
+      a.rot = v.rot;
+      a.fechamento = v.fechamento;
+    } else {
+      a.forma = 'ret';
+      if (p && 'ladoPorta' in v) {
+        if ((+p.paredeB || 0) % 2 === 0) { a.comp = v.ladoPorta; a.larg = v.prof; } else { a.larg = v.ladoPorta; a.comp = v.prof; }
+      } else { a.comp = v.comp; a.larg = v.larg; }
+    }
     if ('nivel' in v) a.nivel = v.nivel;
     if ('peDireito' in v) a.peDireito = v.peDireito;
   };
@@ -1340,9 +1522,9 @@ function aplicar(L, r) {
   }
   if (r.tipo === 'porta') {
     let p = r.id && L.portas.find(x => x.id === r.id);
-    if (!p) { p = { id: r.novoId, ambA: r.ambA, ambB: null, bonecaB: '', cantoB: 'ini' }; L.portas.push(p); }
+    if (!p) { p = { id: r.novoId, ambA: r.ambA, ambB: null, paredeB: 0, bonecaB: '', cantoB: 'ini' }; L.portas.push(p); }
     Object.assign(p, {
-      parede: v.parede, modelo: v.modelo, abre: v.abre, lado: v.lado, largura: v.largura, altura: v.altura,
+      parede: +v.parede, modelo: v.modelo, abre: v.abre, lado: v.lado, largura: v.largura, altura: v.altura,
       peitoril: v.peitoril, boneca: v.boneca, canto: v.canto, espessura: v.espessura,
     });
     if (p.ambB) { p.bonecaB = v.bonecaB; p.cantoB = v.cantoB; }
@@ -1353,9 +1535,7 @@ function aplicar(L, r) {
   if (!b) { b = novoAmbiente(L, ambPorId(L, p.ambA).pavimentoId); b.id = r.novoId; L.ambientes.push(b); }
   b.nome = v.nome;
   b.ancora = p.id;
-  p.ambB = b.id;
-  p.bonecaB = v.bonecaB;
-  p.cantoB = v.cantoB;
+  Object.assign(p, { ambB: b.id, paredeB: 0, bonecaB: v.bonecaB, cantoB: v.cantoB });
   medidas(b, p.id);
   return { ambId: b.id, portaId: p.id };
 }
@@ -1369,6 +1549,7 @@ function atualizarPrevia() {
   const [W, H] = tamanhoSvg(el);
   const cotas = [], foco = [ref.ambId];
   const p = ref.portaId && Lc.portas.find(x => x.id === ref.portaId);
+  let cantos = ref.ambId;
   if (rasc.tipo === 'porta') {
     cotas.push(Planta.cotaBoneca(lay, p.id, 'A', fmt(num(p.boneca) || 0)), Planta.cotaLargura(lay, p.id, fmt(num(p.largura) || 0)));
     if (p.ambB) { cotas.push(Planta.cotaBoneca(lay, p.id, 'B', fmt(num(p.bonecaB) || 0))); foco.push(p.ambB); }
@@ -1376,17 +1557,18 @@ function atualizarPrevia() {
     foco.push(p.ambA);
     cotas.push(Planta.cotaBoneca(lay, p.id, 'B', fmt(num(p.bonecaB) || 0)));
   }
-  el.innerHTML = Planta.svg(Lc, rasc.pav, lay, Planta.enquadrar(lay, W, H, foco), { cotas: cotas.filter(Boolean), destaque: [ref.ambId] });
+  el.innerHTML = Planta.svg(Lc, rasc.pav, lay, Planta.enquadrar(lay, W, H, foco), { cotas: cotas.filter(Boolean), destaque: [ref.ambId], cantos });
   const av = $('#dl-avisos');
   if (av) av.innerHTML = Planta.conferir(Lc, rasc.pav, lay).map(x => `<div class="alerta">${h(x)}</div>`).join('');
 }
 
 async function salvarDialogo() {
   const r = rasc, v = r.v;
-  if (r.tipo === 'amb' || r.tipo === 'vizinho') {
+  if ((r.tipo === 'amb' || r.tipo === 'vizinho') && v.forma !== 'poli') {
     const m1 = num('ladoPorta' in v ? v.ladoPorta : v.comp), m2 = num('prof' in v ? v.prof : v.larg);
     if (!(m1 > 0 && m2 > 0)) return toast('Informe as duas medidas do ambiente.');
   }
+  if (v.forma === 'poli' && v.paredes.some(p => !(num(p.c) > 0))) return toast('Informe o comprimento de todas as paredes.');
   if (r.tipo === 'porta') {
     if (!(num(v.largura) > 0)) return toast('Informe a largura do vão.');
     if (num(v.boneca) == null) return toast('Informe a distância da boneca.');
@@ -1409,7 +1591,7 @@ let v3 = null, modelo3d = null, corte3d = false;
 function abrir3D() {
   const L = ctx.lev, pav = pavAtual(L), ov = $('#vista3d');
   modelo3d = Vista3D.montar(L, pav, corte3d ? 1.2 : null);
-  if (!modelo3d.lay.pos.size) return toast('Desenhe a planta primeiro.');
+  if (!modelo3d.faces.length) return toast('Desenhe a planta primeiro.');
   const nomePv = (L.pavimentos.find(p => p.id === pav) || {}).nome || '';
   ov.innerHTML = `<div class="dl-top">
       <button class="btn btn-ghost" data-acao="fechar-3d">Fechar</button>
@@ -1580,7 +1762,7 @@ function montarAbas(L) {
     colunas: [
       { t: 'Código', w: 10 }, { t: 'Pavimento', w: 14 }, { t: 'Nome', w: 28 }, { t: 'Uso', w: 22 }, { t: 'Forma', w: 11 },
       { t: 'Comprimento (m)', w: 15, fmt: 'dec' }, { t: 'Largura (m)', w: 12, fmt: 'dec' },
-      { t: 'Partes (forma irregular)', w: 30 }, { t: 'Lados (m)', w: 24 },
+      { t: 'Partes (forma irregular)', w: 30 }, { t: 'Paredes / lados (m)', w: 40 },
       { t: 'Área (m²)', w: 11, fmt: 'dec' }, { t: 'Perímetro (m)', w: 13, fmt: 'dec' },
       { t: 'Pé-direito (m)', w: 13, fmt: 'dec' }, { t: 'Volume (m³)', w: 12, fmt: 'dec' },
       { t: 'Piso', w: 22 }, { t: 'Parede', w: 22 }, { t: 'Forro / teto', w: 24 }, { t: 'Conservação', w: 12 },
@@ -1591,9 +1773,10 @@ function montarAbas(L) {
     linhas: ambs.map(a => {
       const c = calc(a), ret = a.forma === 'ret', ps = posicao.get(a.id);
       return [
-        a.codigo, nomePav(L, a.pavimentoId), a.nome, a.uso, ret ? 'Retangular' : 'Outra forma',
+        a.codigo, nomePav(L, a.pavimentoId), a.nome, a.uso, ret ? 'Retangular' : a.forma === 'poli' ? 'Forma livre' : 'Outra forma',
         ret ? r2(num(a.comp)) : null, ret ? r2(num(a.larg)) : null,
-        ret ? '' : txtPartes(a), ret ? '' : parseLados(a.lados).map(x => fmt(x)).join('; '),
+        ret || a.forma === 'poli' ? '' : txtPartes(a),
+        a.forma === 'poli' ? (a.paredes || []).map((p, k) => `${Planta.letra(k)}–${Planta.letra(k + 1)} ${fmt(num(p.c))}${k ? ` (${p.ang}°)` : ''}`).join('; ') : ret ? '' : parseLados(a.lados).map(x => fmt(x)).join('; '),
         c.area, c.perim, c.pd != null ? r2(c.pd) : null, c.vol,
         a.piso, a.parede, a.forro, a.conservacao,
         a.fotos.length, a.fotos.map(f => arq.get(f.id)).join(', '), a.inst.length,
@@ -1603,11 +1786,10 @@ function montarAbas(L) {
     }),
   };
 
-  const nomeParede = { cima: 'De cima', baixo: 'De baixo', esq: 'Da esquerda', dir: 'Da direita' };
   const portas = {
     nome: 'Portas e janelas', filtro: true,
     colunas: [
-      { t: 'Pavimento', w: 14 }, { t: 'Ambiente', w: 12 }, { t: 'Parede (na planta)', w: 16 }, { t: 'Modelo', w: 14 },
+      { t: 'Pavimento', w: 14 }, { t: 'Ambiente', w: 12 }, { t: 'Parede', w: 10 }, { t: 'Modelo', w: 14 },
       { t: 'Largura do vão (m)', w: 13, fmt: 'dec' }, { t: 'Altura (m)', w: 10, fmt: 'dec' }, { t: 'Peitoril (m)', w: 10, fmt: 'dec' },
       { t: 'Abre para', w: 14 }, { t: 'Dobradiça / corre para', w: 16 }, { t: 'Espessura da parede (m)', w: 13, fmt: 'dec' },
       { t: 'Boneca (m)', w: 11, fmt: 'dec' }, { t: 'Boneca medida', w: 20 },
@@ -1616,12 +1798,12 @@ function montarAbas(L) {
     linhas: L.portas.map(p => {
       const A = ambPorId(L, p.ambA), B = p.ambB && ambPorId(L, p.ambB);
       return [
-        nomePav(L, A.pavimentoId), A.codigo, nomeParede[p.parede], nomeModelo(p.modelo),
+        nomePav(L, A.pavimentoId), A.codigo, nomeParede(A, +p.parede), nomeModelo(p.modelo),
         r2(num(p.largura)), r2(num(p.altura)), Planta.ehJanela(p.modelo) ? r2(num(p.peitoril)) : null,
         ['giro', 'giro2', 'correr', 'correr2'].includes(p.modelo) ? (p.abre === 'fora' ? (B ? 'Dentro de ' + B.codigo : 'Fora') : 'Dentro de ' + A.codigo) : '',
-        p.modelo === 'giro' || p.modelo === 'correr' ? rotulosLado(p.parede)[p.lado === 'fim' ? 1 : 0] : '',
-        r2(num(p.espessura)), r2(num(p.boneca)), rotuloCanto(p.parede, p.canto),
-        B ? B.codigo : '', B ? r2(num(p.bonecaB)) : null, B ? rotuloCanto(p.parede, p.cantoB) : '',
+        p.modelo === 'giro' || p.modelo === 'correr' ? 'Lado do canto ' + cantosDe(A, +p.parede)[p.lado === 'fim' ? 1 : 0] : '',
+        r2(num(p.espessura)), r2(num(p.boneca)), 'Do canto ' + cantosDe(A, +p.parede)[p.canto === 'fim' ? 1 : 0],
+        B ? B.codigo : '', B ? r2(num(p.bonecaB)) : null, B ? 'Do canto ' + cantosDe(B, +p.paredeB || 0)[p.cantoB === 'fim' ? 1 : 0] + ' de ' + B.codigo : '',
       ];
     }),
   };
@@ -1632,7 +1814,7 @@ function montarAbas(L) {
       { t: 'Código do ambiente', w: 12 }, { t: 'Ambiente', w: 26 }, { t: 'Pavimento', w: 14 }, { t: 'Item', w: 7 },
       { t: 'Tipo', w: 28 }, { t: 'Quantidade', w: 11, fmt: 'int' }, { t: 'Comprimento aprox. (m)', w: 14, fmt: 'dec' },
       { t: 'Altura do piso (m)', w: 13, fmt: 'dec' }, { t: 'Localização / encaminhamento', w: 50 }, { t: 'Arquivos das fotos', w: 34 },
-      { t: 'Parede (na planta)', w: 16 }, { t: 'Posição na parede (m)', w: 14, fmt: 'dec' },
+      { t: 'Parede', w: 10 }, { t: 'Posição a partir do 1º canto (m)', w: 16, fmt: 'dec' },
     ],
     linhas: ambs.flatMap(a => a.inst.map((it, k) => {
       const linear = LINEARES.has(it.tipo);
@@ -1640,7 +1822,7 @@ function montarAbas(L) {
         a.codigo, a.nome, nomePav(L, a.pavimentoId), `I${String(k + 1).padStart(2, '0')}`, it.tipo,
         linear ? null : num(it.qtd), linear ? r2(num(it.comp)) : null, r2(num(it.altura)), it.local,
         it.fotos.map(f => arq.get(f.id)).join(', '),
-        it.parede ? nomeParede[it.parede] : '', it.parede ? r2(num(it.pos)) : null,
+        it.parede !== '' && it.parede != null ? nomeParede(a, +it.parede) : '', it.parede !== '' && it.parede != null ? r2(num(it.pos)) : null,
       ];
     })),
   };
@@ -1650,14 +1832,14 @@ function montarAbas(L) {
     colunas: [
       { t: 'Pavimento', w: 14 }, { t: 'Ambiente', w: 12 }, { t: 'Objeto', w: 22 }, { t: 'Largura (m)', w: 11, fmt: 'dec' },
       { t: 'Profundidade (m)', w: 13, fmt: 'dec' }, { t: 'Altura (m)', w: 10, fmt: 'dec' }, { t: 'Rotação (graus)', w: 12, fmt: 'int' },
-      { t: 'Da parede da esquerda (m)', w: 15, fmt: 'dec' }, { t: 'Da parede de baixo (m)', w: 15, fmt: 'dec' }, { t: 'Nível (m)', w: 10, fmt: 'dec' },
+      { t: 'Centro X no ambiente (m)', w: 15, fmt: 'dec' }, { t: 'Centro Y no ambiente (m)', w: 15, fmt: 'dec' }, { t: 'Nível (m)', w: 10, fmt: 'dec' },
     ],
     linhas: ambs.flatMap(a => a.objetos.map(o => {
       const b = Planta.BIBLIOTECA[o.tipo] || { nome: o.tipo, w: 0, d: 0, h: 0 };
       return [
         nomePav(L, a.pavimentoId), a.codigo, b.nome, num(o.w) ?? b.w, num(o.d) ?? b.d,
         o.tipo === 'pilar' ? (num(a.peDireito) ?? null) : o.tipo === 'desnivel' ? null : (num(o.h) ?? b.h),
-        +o.rot || 0, num(o.x) ?? 0, num(o.y) ?? 0, o.tipo === 'desnivel' ? num(o.nivel) : null,
+        num(o.rot) || 0, num(o.cx) ?? 0, num(o.cy) ?? 0, o.tipo === 'desnivel' ? num(o.nivel) : null,
       ];
     })),
   };
@@ -1770,7 +1952,14 @@ async function importar(file) {
 // ───────────────────────── Eventos ─────────────────────────
 document.addEventListener('input', e => {
   const el = e.target;
-  if (el.dataset.r && rasc) { rasc.v[el.dataset.r] = el.value; atualizarPrevia(); return; }
+  if (el.dataset.r && rasc) {
+    const [campo, k] = el.dataset.r.split(':');
+    if (k != null && rasc.v.paredes && rasc.v.paredes[+k]) rasc.v.paredes[+k][campo] = el.value;
+    else rasc.v[el.dataset.r] = el.value;
+    atualizarPrevia();
+    return;
+  }
+  if (el.dataset.dz && ctx.desenho) { aplicarDesenho(el.dataset.dz, el.value); agendarPlanta(); return; }
   if (el.dataset.pe && ctx.item) {
     aplicarPe(el.dataset.pe, el.value);
     agendarPlanta();
@@ -1910,6 +2099,37 @@ async function acao(nome, b) {
     }
     case 'pl-enquadrar': ctx.focar = true; desenharPlanta(); break;
     case 'pl-novo-raiz': abrirAmbiente(null); break;
+    case 'pl-desenhar': iniciarDesenho(); break;
+    case 'dz-desfazer': {
+      const a2 = ambPorId(L, ctx.desenho.amb);
+      if (a2.paredes.length > (a2.ancora ? 1 : 0)) a2.paredes.pop();
+      else if (!a2.ancora) a2.pos = null;
+      salvarDepois();
+      desenharPlanta();
+      break;
+    }
+    case 'dz-cancelar': await cancelarDesenho(); break;
+    case 'dz-fechar': fecharDesenho(); break;
+    case 'dl-virar-poli': {
+      const v = rasc.v;
+      const ladoA = num(v.comp ?? v.ladoPorta), ladoB = num(v.larg ?? v.prof);
+      const par = !rasc.ancora || (+(ctx.lev.portas.find(x => x.id === rasc.ancora) || {}).paredeB || 0) % 2 === 0;
+      const c0 = vnum(par ? ladoA : ladoB), c1 = vnum(par ? ladoB : ladoA);
+      Object.assign(v, { forma: 'poli', paredes: [{ c: c0 }, { c: c1, ang: '90' }, { c: c0, ang: '90' }], rot: v.rot || '0', fechamento: '' });
+      desenharDialogo();
+      break;
+    }
+    case 'dl-parede-mais': rasc.v.paredes.push({ c: '', ang: '90' }); desenharDialogo(); break;
+    case 'dl-parede-menos': if (rasc.v.paredes.length > 2) rasc.v.paredes.pop(); desenharDialogo(); break;
+    case 'dl-viz-livre': {
+      const v = rasc.v;
+      if (!(num(v.ladoPorta) > 0)) return toast('Informe a medida da parede da porta (A–B) antes.');
+      if (num(v.bonecaB) == null) return toast('Informe a boneca da porta neste ambiente antes.');
+      const porta = L.portas.find(x => x.id === rasc.portaId);
+      fecharDialogo();
+      iniciarDesenho({ porta, nome: v.nome, ladoPorta: v.ladoPorta, bonecaB: v.bonecaB, cantoB: v.cantoB, nivel: v.nivel });
+      break;
+    }
     case 'pl-nova-porta': abrirPorta(null); break;
     case 'pl-editar-amb': if (ctx.sel) abrirAmbiente(ctx.sel); break;
     case 'dl-cancelar': fecharDialogo(); break;

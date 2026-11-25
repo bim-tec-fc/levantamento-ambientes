@@ -241,3 +241,14 @@ svg.d3 polygon{stroke:var(--fc-ink);stroke-width:.6;stroke-opacity:.55;stroke-li
 .d3-patamar{fill:color-mix(in srgb,var(--fc-warning) 30%,var(--fc-surface))}
 .d3-vidro{fill:var(--fc-info);fill-opacity:.28;stroke-opacity:.2}
 .dl-top .btn.ativo{border-color:var(--fc-primary);color:var(--fc-red-text)}
+
+/* ═══ Desenho parede a parede ═══ */
+svg.planta.desenhando{cursor:crosshair}
+.dz-linha{display:grid;grid-template-columns:44px 1fr 1fr;gap:8px;align-items:end;padding-bottom:6px;border-bottom:1px dashed var(--fc-border)}
+.dz-par{font-family:var(--fc-cond);font-weight:700;font-size:15px;color:var(--fc-red-text);padding-bottom:12px}
+.dz-linha .dica{font-size:11px}
+.pl-canto circle{fill:var(--fc-primary)}
+.pl-canto text{font-family:var(--fc-cond);font-weight:700;font-size:12px;fill:var(--fc-red-text);pointer-events:none;paint-order:stroke;stroke:var(--fc-surface);stroke-width:3px}
+.pl-canto{pointer-events:none}
+.pl-fechar{stroke:var(--fc-primary);stroke-width:1.5;stroke-dasharray:6 5;pointer-events:none}
+svg.d3 polygon.d3-parede:not(.d3-topo){stroke-opacity:.18}
