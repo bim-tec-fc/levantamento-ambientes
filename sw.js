@@ -4,9 +4,9 @@
    é isso que faz os celulares baixarem a versão nova.
    Núcleo BIM · Ferreira Costa · Melqui Domingos
    ═══════════════════════════════════════════════════════════════════════════ */
-const VERSAO = 'levamb-1.0.0';
+const VERSAO = 'levamb-1.1.0';
 const ARQUIVOS = [
-  './', './index.html', './app.js', './xlsx.js', './fc-base.css', './app.css', './manifest.webmanifest',
+  './', './index.html', './app.js', './xlsx.js', './planta.js', './fc-base.css', './app.css', './manifest.webmanifest',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png',
   './fonts/barlow-400.woff2', './fonts/barlow-500.woff2', './fonts/barlow-600.woff2', './fonts/barlow-700.woff2',
   './fonts/barlow-condensed-500.woff2', './fonts/barlow-condensed-600.woff2', './fonts/barlow-condensed-700.woff2',

@@ -8,7 +8,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 'use strict';
 
-const VERSAO = '1.0.0';
+const VERSAO = '1.1.0';
 const FORMATO_BACKUP = 'fc-levantamento-ambientes';
 
 // ───────────────────────── Listas padrão ─────────────────────────
@@ -116,7 +116,8 @@ const db = {
 };
 
 // ───────────────────────── Estado da tela ─────────────────────────
-const ctx = { lev: null, amb: null, filtroPav: '', arquivoPronto: null };
+const ctx = { lev: null, amb: null, filtroPav: '', arquivoPronto: null, sel: null, pavPlanta: '', views: {} };
+let rasc = null;                 // rascunho do formulário aberto na planta
 const outroAberto = new Set();   // campos "Outro…" abertos e ainda vazios
 const thumbs = new Map();        // fotoId → miniatura
 let timerSalvar = null;
@@ -129,14 +130,14 @@ function novoLevantamento() {
     id: uid(), formato: FORMATO_BACKUP, versaoDados: 1,
     filial: '', endereco: '', responsavel: ls.get('responsavel', ''), data: hojeISO(), obs: '',
     pavimentos: [{ id: uid(), nome: 'Térreo', sigla: 'T' }],
-    ambientes: [], criadoEm: Date.now(), atualizadoEm: Date.now(), ultimaExportacao: null,
+    ambientes: [], portas: [], criadoEm: Date.now(), atualizadoEm: Date.now(), ultimaExportacao: null,
   };
 }
 function novoAmbiente(L, pavId) {
   return {
     id: uid(), codigo: proximoCodigo(L, pavId), pavimentoId: pavId, nome: '', uso: '',
     forma: 'ret', comp: '', larg: '', partes: [], lados: '', peDireito: '',
-    piso: '', parede: '', forro: '', conservacao: '', obs: '', fotos: [], inst: [], criadoEm: Date.now(),
+    piso: '', parede: '', forro: '', conservacao: '', obs: '', fotos: [], inst: [], ancora: null, criadoEm: Date.now(),
   };
 }
 const novaParte = (c = '', l = '') => ({ id: uid(), c, l, desc: false });
@@ -146,7 +147,17 @@ const novaInst = () => ({ id: uid(), tipo: '', qtd: '1', comp: '', altura: '', l
 function normalizar(L) {
   L.pavimentos = Array.isArray(L.pavimentos) && L.pavimentos.length ? L.pavimentos : [{ id: uid(), nome: 'Térreo', sigla: 'T' }];
   L.ambientes = Array.isArray(L.ambientes) ? L.ambientes : [];
+  L.portas = Array.isArray(L.portas) ? L.portas : [];
+  const idsAmb = new Set(L.ambientes.map(a => a.id));
+  L.portas = L.portas.filter(p => idsAmb.has(p.ambA));
+  for (const p of L.portas) {
+    if (p.ambB && !idsAmb.has(p.ambB)) { p.ambB = null; p.bonecaB = ''; }
+    for (const k of ['largura', 'boneca', 'espessura', 'bonecaB']) p[k] = p[k] ?? '';
+    p.canto = p.canto === 'fim' ? 'fim' : 'ini';
+    p.cantoB = p.cantoB === 'fim' ? 'fim' : 'ini';
+  }
   for (const a of L.ambientes) {
+    a.ancora = a.ancora ?? null;
     a.partes = Array.isArray(a.partes) ? a.partes : [];
     a.fotos = Array.isArray(a.fotos) ? a.fotos : [];
     a.inst = Array.isArray(a.inst) ? a.inst : [];
@@ -273,6 +284,7 @@ function toast(msg, ms = 3200) {
 async function rotear() {
   await flush();
   fecharOverlay(false);
+  fecharDialogo();
   const p = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   try {
     if (p[0] === 'l' && p[1]) {
@@ -292,7 +304,7 @@ async function rotear() {
       }
       ctx.amb = null;
       window.scrollTo(0, 0);
-      return telaLev(p[2] || 'ambientes');
+      return telaLev(p[2] || 'planta');
     }
     ctx.lev = null;
     ctx.amb = null;
@@ -305,7 +317,8 @@ async function rotear() {
 }
 window.addEventListener('hashchange', rotear);
 
-function render({ titulo, sub, voltar, corpo, rodape, abas }) {
+function render({ titulo, sub, voltar, corpo, rodape, abas, planta }) {
+  document.body.classList.toggle('modo-planta', !!planta);
   $('#app').innerHTML = `
   <header class="fc-topbar tb">
     <div class="tb-in">
@@ -318,7 +331,7 @@ function render({ titulo, sub, voltar, corpo, rodape, abas }) {
     </div>
     ${abas || ''}
   </header>
-  <main class="wrap${rodape ? ' com-rodape' : ''}">${corpo}</main>
+  ${planta ? corpo : `<main class="wrap${rodape ? ' com-rodape' : ''}">${corpo}</main>`}
   ${rodape ? `<div class="bottombar">${rodape}</div>` : ''}`;
 }
 
@@ -328,7 +341,7 @@ function redesenhar() {
   if (ctx.amb) telaAmbiente(); else if (ctx.lev) telaLev(abaAtual()); else telaInicio();
   window.scrollTo(0, y);
 }
-const abaAtual = () => location.hash.split('/')[3] || 'ambientes';
+const abaAtual = () => location.hash.split('/')[3] || 'planta';
 
 // ───────────────────────── Componentes de formulário ─────────────────────────
 let _n = 0;
@@ -419,16 +432,18 @@ async function telaInicio() {
 // ───────────────────────── Tela: levantamento ─────────────────────────
 function telaLev(aba) {
   const L = ctx.lev, base = `#/l/${L.id}`;
-  const abas = `<nav class="tabs">${[['ambientes', 'Ambientes'], ['dados', 'Dados'], ['exportar', 'Exportar']]
-    .map(([k, t]) => `<a class="tab${aba === k ? ' on' : ''}" href="${base}${k === 'ambientes' ? '' : '/' + k}">${t}</a>`).join('')}</nav>`;
-  let corpo, rodape = '';
+  const abas = `<nav class="tabs">${[['planta', 'Planta'], ['ambientes', 'Ambientes'], ['dados', 'Dados'], ['exportar', 'Exportar']]
+    .map(([k, t]) => `<a class="tab${aba === k ? ' on' : ''}" href="${base}${k === 'planta' ? '' : '/' + k}">${t}</a>`).join('')}</nav>`;
+  if (aba === 'planta') {
+    render({ titulo: L.filial || 'Sem nome', sub: 'Levantamento', voltar: '#/', corpo: htmlPlanta(L), abas, planta: true });
+    iniciarPlanta();
+    return;
+  }
+  let corpo;
   if (aba === 'dados') corpo = htmlDados(L);
   else if (aba === 'exportar') corpo = htmlExportar(L);
-  else {
-    corpo = htmlAmbientes(L);
-    rodape = `<button class="btn btn-primary" data-acao="add-amb">+ Novo ambiente</button>`;
-  }
-  render({ titulo: L.filial || 'Sem nome', sub: 'Levantamento', voltar: '#/', corpo, rodape, abas });
+  else corpo = htmlAmbientes(L);
+  render({ titulo: L.filial || 'Sem nome', sub: 'Levantamento', voltar: '#/', corpo, abas });
   if (aba === 'exportar') mostrarArmazenamento();
 }
 
@@ -454,7 +469,7 @@ function htmlAmbientes(L) {
       <div class="item-d"><div class="num item-area">${c.area != null ? fmt(c.area) + ' m²' : '–'}</div>
         <span class="farol ${classeFarol(pct)}">${pct}%</span></div>
     </a>`;
-  }).join('') : `<div class="card vazio">Nenhum ambiente${f ? ' neste pavimento' : ''} ainda.<br>Toque em <b>+ Novo ambiente</b>.</div>`;
+  }).join('') : `<div class="card vazio">Nenhum ambiente${f ? ' neste pavimento' : ''} ainda.<br>Os ambientes são desenhados na aba <b>Planta</b>.</div>`;
   return kpis + chips + lista;
 }
 
@@ -512,9 +527,11 @@ function htmlExportar(L) {
   </section>` : ''}
   <section class="card sec">
     <h2 class="fc-h2">Exportar</h2>
+    <button class="exp" data-acao="exp-dxf"><b>Planta baixa (.dxf)</b>
+      <span>Para abrir no AutoCAD ou importar no Revit. Unidade: metro. Pavimentos lado a lado.</span></button>
     <button class="exp" data-acao="exp-xlsx"><b>Planilha Excel (.xlsx)</b>
-      <span>Abas de ambientes, instalações e resumo por pavimento.</span></button>
-    <button class="exp" data-acao="exp-zip"><b>Planilha + fotos (.zip)</b>
+      <span>Abas de ambientes (com posição na planta), portas, instalações e resumo por pavimento.</span></button>
+    <button class="exp" data-acao="exp-zip"><b>Planilha + planta + fotos (.zip)</b>
       <span>${nFotos} foto(s), com o código do ambiente no nome do arquivo.</span></button>
     <button class="exp" data-acao="exp-json"><b>Backup completo (.json)</b>
       <span>Guarda tudo, inclusive fotos. Use "Importar backup" para abrir em outro aparelho.</span></button>
@@ -537,8 +554,9 @@ function telaAmbiente() {
   const pavOpts = L.pavimentos.map(p => `<option value="${h(p.id)}"${p.id === a.pavimentoId ? ' selected' : ''}>${h(p.nome || p.sigla)}</option>`).join('');
   const idPav = fid();
 
+  const ligado = estaLigado(L, a);
   const medidas = a.forma === 'ret'
-    ? `<div class="grid2">${campoNum('Comprimento', 'a.comp', a.comp)}${campoNum('Largura', 'a.larg', a.larg)}</div>`
+    ? `<div class="grid2">${campoNum('Comprimento ↔ (na planta)', 'a.comp', a.comp)}${campoNum('Largura ↕ (na planta)', 'a.larg', a.larg)}</div>`
     : `<p class="dica">Divida o ambiente em retângulos. Marque "descontar" para recortes (pilar, shaft, escada).</p>
        ${a.partes.map((p, i) => `<div class="parte">
           <span class="parte-n num">${i + 1}</span>
@@ -578,7 +596,7 @@ function telaAmbiente() {
       <div class="grid2">
         ${campo('Código', 'a.codigo', a.codigo, { cls: 'num', extra: 'autocapitalize="characters"' })}
         <div class="field"><label for="${idPav}">Pavimento</label>
-          <select id="${idPav}" class="input" data-mudapav>${pavOpts}</select></div>
+          <select id="${idPav}" class="input" data-mudapav${ligado ? ' disabled title="Ambiente ligado por porta a outro"' : ''}>${pavOpts}</select></div>
       </div>
       ${campo('Nome do ambiente', 'a.nome', a.nome, { extra: 'placeholder="Ex.: Depósito de cerâmica" enterkeyhint="next" autocapitalize="sentences"' })}
       ${campoLista('Uso', 'a.uso', USOS, a.uso)}
@@ -586,10 +604,9 @@ function telaAmbiente() {
 
     <section class="card sec">
       <h2 class="fc-h2">Medidas (m)</h2>
-      <div class="seg">
-        <button class="chip${a.forma === 'ret' ? '' : ' off'}" data-acao="forma" data-v="ret">Retangular</button>
-        <button class="chip${a.forma === 'irr' ? '' : ' off'}" data-acao="forma" data-v="irr">Outra forma</button>
-      </div>
+      ${a.forma === 'irr' ? `<div class="seg">
+        <button class="chip off" data-acao="forma" data-v="ret">Voltar para retangular</button>
+      </div>` : '<p class="dica">Alterar as medidas redesenha a planta.</p>'}
       ${medidas}
       ${campoNum('Pé-direito', 'a.peDireito', a.peDireito, { dica: 'Do piso ao forro ou, sem forro, até a laje ou o banzo da cobertura.' })}
       <div class="res" id="res"></div>
@@ -623,11 +640,10 @@ function telaAmbiente() {
     </section>
 
     <section class="acoes-fim">
-      <button class="btn btn-ghost" data-acao="dup-amb">Duplicar ambiente</button>
       <button class="btn btn-ghost perigo" data-acao="del-amb">Excluir ambiente</button>
     </section>`,
-    rodape: `<a class="btn btn-ghost" href="#/l/${h(L.id)}">Lista</a>
-             <button class="btn btn-primary" data-acao="prox-amb">+ Próximo ambiente</button>`,
+    rodape: `<a class="btn btn-ghost" href="#/l/${h(L.id)}/ambientes">Lista</a>
+             <button class="btn btn-primary" data-acao="ver-na-planta">Ver na planta</button>`,
   });
   atualizarAmb();
   carregarThumbs();
@@ -659,6 +675,401 @@ function atualizarAmb() {
   }
   const t = $('#titulo');
   if (t) t.textContent = tituloAmb(a);
+}
+
+// ───────────────────────── Planta baixa ─────────────────────────
+const NOMES_PAREDE = { cima: 'de cima', baixo: 'de baixo', esq: 'da esquerda', dir: 'da direita' };
+const SETA = { cima: '↑', baixo: '↓', esq: '←', dir: '→' };
+const rotuloCanto = (parede, canto) => Planta.HORIZ(parede)
+  ? (canto === 'fim' ? 'Do canto direito' : 'Do canto esquerdo')
+  : (canto === 'fim' ? 'Do canto de cima' : 'Do canto de baixo');
+const ICONE_ENQUADRAR = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>';
+
+const ambPorId = (L, id) => L.ambientes.find(a => a.id === id);
+function estaLigado(L, a) {
+  return !!a.ancora || L.portas.some(p => (p.ambA === a.id && p.ambB) || p.ambB === a.id);
+}
+/** Ambientes desenhados a partir das portas deste (dependem dele para ter posição). */
+function dependentes(L, a) {
+  return L.portas.filter(p => p.ambA === a.id && p.ambB)
+    .map(p => L.ambientes.find(x => x.id === p.ambB && x.ancora === p.id)).filter(Boolean);
+}
+async function excluirAmbiente(L, a) {
+  const dep = dependentes(L, a);
+  if (dep.length) {
+    alert(`Antes, exclua o que foi desenhado a partir das portas de ${tituloAmb(a)}: ${dep.map(tituloAmb).join(', ')}.`);
+    return false;
+  }
+  if (!confirm(`Excluir o ambiente ${tituloAmb(a)} e as fotos dele?`)) return false;
+  await apagarFotos(fotosDoAmb(a));
+  L.portas = L.portas.filter(p => p.ambA !== a.id);
+  for (const p of L.portas) if (p.ambB === a.id) { p.ambB = null; p.bonecaB = ''; p.cantoB = 'ini'; }
+  L.ambientes = L.ambientes.filter(x => x !== a);
+  if (ctx.sel === a.id) ctx.sel = null;
+  if (ctx.amb === a) ctx.amb = null;
+  salvarDepois();
+  await flush();
+  return true;
+}
+
+function pavAtual(L) {
+  if (!L.pavimentos.some(p => p.id === ctx.pavPlanta)) {
+    const comAmb = L.pavimentos.find(p => L.ambientes.some(a => a.pavimentoId === p.id));
+    ctx.pavPlanta = (comAmb || L.pavimentos[0]).id;
+  }
+  return ctx.pavPlanta;
+}
+
+function htmlPlanta(L) {
+  const pav = pavAtual(L);
+  const chips = L.pavimentos.length > 1 ? `<div class="seg pl-pavs">${L.pavimentos.map(p =>
+    `<button class="chip${p.id === pav ? '' : ' off'}" data-acao="pl-pav" data-id="${h(p.id)}">${h(p.nome || p.sigla)}</button>`).join('')}</div>` : '';
+  return `<main class="planta-area">
+    ${chips}
+    <svg id="planta" class="planta" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Planta baixa"></svg>
+    <div class="pl-zoom">
+      <button class="btn btn-ghost icone" data-acao="pl-zoom" data-v="1.3" aria-label="Aproximar">+</button>
+      <button class="btn btn-ghost icone" data-acao="pl-zoom" data-v="0.77" aria-label="Afastar">−</button>
+      <button class="btn btn-ghost icone" data-acao="pl-enquadrar" aria-label="Enquadrar a planta">${ICONE_ENQUADRAR}</button>
+    </div>
+  </main>
+  <div id="pl-painel" class="pl-painel"></div>`;
+}
+
+function iniciarPlanta() {
+  const el = $('#planta');
+  if (!el) return;
+  ligarGestos(el);
+  desenharPlanta();
+}
+
+function tamanhoSvg(el) {
+  const W = el.clientWidth || 360, H = el.clientHeight || 400;
+  el.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  return [W, H];
+}
+
+function desenharPlanta() {
+  const L = ctx.lev, el = $('#planta');
+  if (!L || !el) return;
+  const pav = pavAtual(L);
+  const lay = Planta.layout(L, pav);
+  if (ctx.sel && !lay.pos.has(ctx.sel)) ctx.sel = null;
+  const [W, H] = tamanhoSvg(el);
+  if (!lay.pos.size) { delete ctx.views[pav]; el.innerHTML = ''; painelPlanta(lay); return; }
+  const v0 = ctx.views[pav];
+  // reenquadra quando pedido ou quando o ambiente selecionado (ou o "+" das portas dele) ficaria fora da tela
+  const r = ctx.verSel && ctx.sel && lay.pos.get(ctx.sel);
+  ctx.verSel = false;
+  const fora = v0 && r && (v0.ox + (r.x - 0.8) * v0.s < 0 || v0.ox + (r.x + r.dx + 0.8) * v0.s > W ||
+    v0.oy - (r.y + r.dy + 0.8) * v0.s < 0 || v0.oy - (r.y - 0.8) * v0.s > H);
+  if (!v0 || ctx.focar || fora) { ctx.views[pav] = Planta.enquadrar(lay, W, H); ctx.focar = null; }
+  el.innerHTML = Planta.svg(L, pav, lay, ctx.views[pav], { sel: ctx.sel, mais: true });
+  painelPlanta(lay);
+}
+let rafPlanta = 0;
+function agendarPlanta() {
+  if (rafPlanta) return;
+  rafPlanta = requestAnimationFrame(() => {
+    rafPlanta = 0;
+    const L = ctx.lev, el = $('#planta');
+    if (!L || !el) return;
+    const pav = pavAtual(L);
+    el.innerHTML = Planta.svg(L, pav, Planta.layout(L, pav), ctx.views[pav], { sel: ctx.sel, mais: true });
+  });
+}
+
+function painelPlanta(lay) {
+  const L = ctx.lev, pav = pavAtual(L), p = $('#pl-painel');
+  if (!p) return;
+  if (!lay.pos.size) {
+    p.innerHTML = `<div class="pl-vazio">
+      <p>Comece pelo ambiente onde você está. Informe as medidas internas; depois inclua as portas e, pelo <b>+</b> de cada porta, desenhe o ambiente do outro lado.</p>
+      <button class="btn btn-primary" data-acao="pl-novo-raiz">Desenhar o primeiro ambiente</button></div>`;
+    return;
+  }
+  const avisos = Planta.conferir(L, pav, lay).map(x => `<div class="alerta">${h(x)}</div>`).join('');
+  const a = ctx.sel && ambPorId(L, ctx.sel);
+  if (!a) {
+    p.innerHTML = `${avisos}
+      <p class="dica">Toque num ambiente para incluir porta ou corrigir medidas. Toque no <b>+</b> de uma porta para desenhar o ambiente do outro lado. Arraste para mover; use dois dedos para aproximar.</p>
+      <div class="fc-row"><button class="btn btn-ghost" data-acao="pl-novo-raiz">+ Ambiente sem ligação</button></div>`;
+    return;
+  }
+  const c = calc(a);
+  const portas = L.portas.filter(x => x.ambA === a.id || x.ambB === a.id);
+  p.innerHTML = `${avisos}
+    <div class="pl-sel">
+      <div class="pl-sel-t"><b class="num">${h(a.codigo)}</b> ${h(a.nome || '(sem nome)')}</div>
+      <div class="pl-sel-s num">${fmt(num(a.comp))} × ${fmt(num(a.larg))} m · ${fmt(c.area)} m²</div>
+    </div>
+    <div class="pl-acoes">
+      <button class="btn btn-primary" data-acao="pl-nova-porta">+ Porta</button>
+      <button class="btn btn-ghost" data-acao="pl-editar-amb">Medidas</button>
+      <a class="btn btn-ghost" href="#/l/${h(L.id)}/a/${h(a.id)}">Detalhes</a>
+    </div>
+    ${portas.length ? `<div class="seg pl-portas">${portas.map(x => {
+      const deA = x.ambA === a.id;
+      const outro = ambPorId(L, deA ? x.ambB : x.ambA);
+      const parede = deA ? x.parede : Planta.OPOSTA[x.parede];
+      return `<button class="chip off" data-acao="pl-editar-porta" data-id="${h(x.id)}">${x.tipo === 'vao' ? 'Vão' : 'Porta'} ${SETA[parede]} ${fmt(num(x.largura))}${outro ? ' · ' + h(outro.codigo) : ' · sem ambiente'}</button>`;
+    }).join('')}</div>` : '<p class="dica">Sem portas ainda. Toque em <b>+ Porta</b>.</p>'}`;
+}
+
+function zoomPlanta(v, f, px, py) {
+  const s2 = Math.max(4, Math.min(600, v.s * f)), k = s2 / v.s;
+  v.ox = px - (px - v.ox) * k;
+  v.oy = py - (py - v.oy) * k;
+  v.s = s2;
+}
+
+function ligarGestos(el) {
+  const pts = new Map();
+  let ini = null, moveu = false, alvo = null, pinca = null;
+  const vista = () => ctx.views[pavAtual(ctx.lev)];
+  el.addEventListener('pointerdown', e => {
+    el.setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 1) { ini = { x: e.clientX, y: e.clientY }; moveu = false; alvo = e.target; }
+    else if (pts.size === 2) { const [a, b] = [...pts.values()]; pinca = Math.hypot(a.x - b.x, a.y - b.y); moveu = true; }
+  });
+  el.addEventListener('pointermove', e => {
+    if (!pts.has(e.pointerId)) return;
+    const ant = pts.get(e.pointerId), at = { x: e.clientX, y: e.clientY };
+    pts.set(e.pointerId, at);
+    const v = vista();
+    if (!v) return;
+    if (pts.size === 1) {
+      if (!moveu && Math.hypot(at.x - ini.x, at.y - ini.y) > 6) moveu = true;
+      if (moveu) { v.ox += at.x - ant.x; v.oy += at.y - ant.y; agendarPlanta(); }
+    } else if (pts.size === 2 && pinca) {
+      const [a, b] = [...pts.values()], d = Math.hypot(a.x - b.x, a.y - b.y), r = el.getBoundingClientRect();
+      zoomPlanta(v, d / pinca, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
+      pinca = d;
+      agendarPlanta();
+    }
+  });
+  const soltar = e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.delete(e.pointerId);
+    if (pts.size < 2) pinca = null;
+    if (pts.size === 0) {
+      if (!moveu && alvo) tocarPlanta(alvo);
+      alvo = null;
+    }
+  };
+  el.addEventListener('pointerup', soltar);
+  el.addEventListener('pointercancel', e => { pts.delete(e.pointerId); pinca = null; moveu = true; });
+  el.addEventListener('wheel', e => {
+    e.preventDefault();
+    const v = vista();
+    if (!v) return;
+    const r = el.getBoundingClientRect();
+    zoomPlanta(v, e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top);
+    agendarPlanta();
+  }, { passive: false });
+}
+
+function tocarPlanta(t) {
+  const mais = t.closest('[data-mais]'), porta = t.closest('[data-porta]'), amb = t.closest('[data-amb]');
+  if (mais) return abrirVizinho(mais.dataset.mais);
+  if (porta) return abrirPorta(porta.dataset.porta);
+  ctx.sel = amb ? amb.dataset.amb : null;
+  desenharPlanta();
+}
+window.addEventListener('resize', () => { if ($('#planta')) desenharPlanta(); if (rasc) atualizarPrevia(); });
+
+// ── Formulários da planta (com pré-visualização) ──
+function abrirAmbiente(id) {
+  const L = ctx.lev;
+  if (!id) {
+    const temAmb = L.ambientes.some(a => a.pavimentoId === pavAtual(L));
+    return abrirDialogo({ tipo: 'amb', id: null, pav: pavAtual(L), titulo: temAmb ? 'Ambiente sem ligação' : 'Primeiro ambiente', v: { nome: '', comp: '', larg: '' } });
+  }
+  const a = ambPorId(L, id);
+  const p = a.ancora && L.portas.find(x => x.id === a.ancora && x.ambB === a.id);
+  const v = { nome: a.nome };
+  if (p) { const hz = Planta.HORIZ(p.parede); v.ladoPorta = hz ? a.comp : a.larg; v.prof = hz ? a.larg : a.comp; }
+  else { v.comp = a.comp; v.larg = a.larg; }
+  abrirDialogo({ tipo: 'amb', id, pav: a.pavimentoId, ancora: p ? p.id : null, titulo: `${a.codigo}: medidas`, v });
+}
+function abrirPorta(id) {
+  const L = ctx.lev;
+  if (!id) {
+    const a = ambPorId(L, ctx.sel);
+    if (!a) return;
+    const usadas = new Set(L.portas.filter(p => p.ambA === a.id).map(p => p.parede));
+    const parede = ['cima', 'dir', 'baixo', 'esq'].find(x => !usadas.has(x)) || 'cima';
+    return abrirDialogo({
+      tipo: 'porta', id: null, novoId: uid(), ambA: a.id, pav: a.pavimentoId, titulo: `Nova porta em ${a.codigo}`,
+      v: { parede, tipo: 'porta', largura: '0,80', boneca: '', canto: 'ini', espessura: ls.get('espessura', '0,15'), bonecaB: '', cantoB: 'ini' },
+    });
+  }
+  const p = L.portas.find(x => x.id === id);
+  const A = ambPorId(L, p.ambA), B = p.ambB && ambPorId(L, p.ambB);
+  abrirDialogo({
+    tipo: 'porta', id, ambA: p.ambA, pav: A.pavimentoId, titulo: B ? `Porta ${A.codigo} ↔ ${B.codigo}` : `Porta em ${A.codigo}`,
+    v: { parede: p.parede, tipo: p.tipo || 'porta', largura: p.largura, boneca: p.boneca, canto: p.canto, espessura: p.espessura, bonecaB: p.bonecaB, cantoB: p.cantoB },
+  });
+}
+function abrirVizinho(portaId) {
+  const L = ctx.lev, p = L.portas.find(x => x.id === portaId);
+  if (!p) return;
+  const A = ambPorId(L, p.ambA);
+  abrirDialogo({ tipo: 'vizinho', portaId, novoId: uid(), pav: A.pavimentoId, titulo: `Ambiente ao lado de ${A.codigo}`, v: { nome: '', ladoPorta: '', prof: '', bonecaB: '', cantoB: 'ini' } });
+}
+
+function abrirDialogo(r) { rasc = r; desenharDialogo(); }
+function fecharDialogo() {
+  const d = $('#dialogo');
+  if (!d || d.hidden) return;
+  d.hidden = true;
+  d.innerHTML = '';
+  rasc = null;
+  document.body.classList.remove('travado');
+}
+function desenharDialogo() {
+  const d = $('#dialogo'), r = rasc;
+  d.innerHTML = `
+    <div class="dl-top">
+      <button class="btn btn-ghost" data-acao="dl-cancelar">Cancelar</button>
+      <b class="dl-tit">${h(r.titulo)}</b>
+      <button class="btn btn-primary" data-acao="dl-salvar">Salvar</button>
+    </div>
+    <div class="dl-prev"><svg id="dl-svg" class="planta" xmlns="http://www.w3.org/2000/svg"></svg></div>
+    <div class="dl-corpo">${formDialogo(r)}<div id="dl-avisos"></div></div>`;
+  d.hidden = false;
+  document.body.classList.add('travado');
+  atualizarPrevia();
+}
+
+function campoR(rot, k, val, { dica = '', extra = '', numero = false } = {}) {
+  const id = fid();
+  return `<div class="field${numero ? ' num' : ''}"><label for="${id}">${h(rot)}</label>
+    <input id="${id}" class="input" data-r="${k}" value="${h(val ?? '')}" autocomplete="off" ${numero ? NUM : ''} ${extra}>
+    ${dica ? `<div class="dica">${dica}</div>` : ''}</div>`;
+}
+const opcoes = (k, atual, lista) => `<div class="seg">${lista.map(([v, t]) =>
+  `<button class="chip${atual === v ? '' : ' off'}" data-acao="dl-op" data-k="${k}" data-v="${v}">${h(t)}</button>`).join('')}</div>`;
+
+function formDialogo(r) {
+  const L = ctx.lev, v = r.v;
+  if (r.tipo === 'amb') {
+    const medidas = r.ancora
+      ? `<div class="grid2">${campoR('Parede da porta (m)', 'ladoPorta', v.ladoPorta, { numero: true })}${campoR('Profundidade (m)', 'prof', v.prof, { numero: true })}</div>`
+      : `<div class="grid2">${campoR('Comprimento ↔ (m)', 'comp', v.comp, { numero: true })}${campoR('Largura ↕ (m)', 'larg', v.larg, { numero: true })}</div>`;
+    return `${campoR('Nome do ambiente', 'nome', v.nome, { extra: 'placeholder="Ex.: Sala de reunião" autocapitalize="sentences"' })}
+      ${medidas}
+      <p class="dica">Medidas internas, de parede a parede.</p>
+      ${r.id ? '<button class="btn btn-ghost perigo" data-acao="dl-excluir-amb">Excluir ambiente</button>' : ''}`;
+  }
+  if (r.tipo === 'porta') {
+    const A = ambPorId(L, r.ambA);
+    const p = r.id && L.portas.find(x => x.id === r.id);
+    const B = p && p.ambB && ambPorId(L, p.ambB);
+    return `<div class="field"><span class="fc-label">Parede de ${h(A.codigo)}${B ? ' (mudar a parede move ' + h(B.codigo) + ')' : ''}</span>
+        ${opcoes('parede', v.parede, ['cima', 'dir', 'baixo', 'esq'].map(x => [x, `${SETA[x]} ${NOMES_PAREDE[x].replace(/^d[aeo] /, '')}`]))}</div>
+      <div class="field"><span class="fc-label">Tipo</span>${opcoes('tipo', v.tipo, [['porta', 'Porta'], ['vao', 'Vão sem porta']])}</div>
+      <div class="grid2">
+        ${campoR('Largura do vão (m)', 'largura', v.largura, { numero: true })}
+        ${campoR('Espessura da parede (m)', 'espessura', v.espessura, { numero: true, dica: 'Medida no batente.' })}
+      </div>
+      ${campoR(`Boneca em ${A.codigo} (m)`, 'boneca', v.boneca, { numero: true, dica: `Do canto da parede até o batente, medida por dentro de ${h(A.codigo)}.` })}
+      ${opcoes('canto', v.canto, [['ini', rotuloCanto(v.parede, 'ini')], ['fim', rotuloCanto(v.parede, 'fim')]])}
+      ${B ? `<hr class="sep">
+        ${campoR(`Boneca em ${B.codigo} (m)`, 'bonecaB', v.bonecaB, { numero: true, dica: `A mesma porta, medida por dentro de ${h(B.codigo)}.` })}
+        ${opcoes('cantoB', v.cantoB, [['ini', rotuloCanto(v.parede, 'ini')], ['fim', rotuloCanto(v.parede, 'fim')]])}` : ''}
+      ${r.id ? '<button class="btn btn-ghost perigo" data-acao="dl-excluir-porta">Excluir porta</button>' : ''}`;
+  }
+  // vizinho
+  const p = L.portas.find(x => x.id === r.portaId), A = ambPorId(L, p.ambA);
+  return `<p class="dica">Porta na parede ${NOMES_PAREDE[p.parede]} de <b>${h(A.codigo)}</b>, vão de ${fmt(num(p.largura))} m. Agora meça o ambiente do outro lado.</p>
+    ${campoR('Nome do ambiente', 'nome', v.nome, { extra: 'placeholder="Ex.: Copa" autocapitalize="sentences"' })}
+    <div class="grid2">
+      ${campoR('Parede da porta (m)', 'ladoPorta', v.ladoPorta, { numero: true, dica: 'A parede onde está a porta.' })}
+      ${campoR('Profundidade (m)', 'prof', v.prof, { numero: true, dica: 'A outra medida.' })}
+    </div>
+    ${campoR('Boneca neste ambiente (m)', 'bonecaB', v.bonecaB, { numero: true, dica: 'Do canto até o batente da mesma porta, medida por dentro deste ambiente.' })}
+    ${opcoes('cantoB', v.cantoB, [['ini', rotuloCanto(p.parede, 'ini')], ['fim', rotuloCanto(p.parede, 'fim')]])}`;
+}
+
+/** Aplica o rascunho no levantamento L (o real ao salvar, ou uma cópia para a pré-visualização). */
+function aplicar(L, r) {
+  const v = r.v;
+  const medidas = (a, ancora) => {
+    const p = ancora && L.portas.find(x => x.id === ancora);
+    if (p && 'ladoPorta' in v) {
+      if (Planta.HORIZ(p.parede)) { a.comp = v.ladoPorta; a.larg = v.prof; } else { a.larg = v.ladoPorta; a.comp = v.prof; }
+    } else { a.comp = v.comp; a.larg = v.larg; }
+    a.forma = 'ret';
+  };
+  if (r.tipo === 'amb') {
+    let a = r.id && ambPorId(L, r.id);
+    if (!a) { a = novoAmbiente(L, r.pav); a.id = r.novoId || (r.novoId = uid()); L.ambientes.push(a); }
+    a.nome = v.nome;
+    medidas(a, r.ancora);
+    return { ambId: a.id };
+  }
+  if (r.tipo === 'porta') {
+    let p = r.id && L.portas.find(x => x.id === r.id);
+    if (!p) { p = { id: r.novoId, ambA: r.ambA, ambB: null, bonecaB: '', cantoB: 'ini' }; L.portas.push(p); }
+    Object.assign(p, { parede: v.parede, tipo: v.tipo, largura: v.largura, boneca: v.boneca, canto: v.canto, espessura: v.espessura });
+    if (p.ambB) { p.bonecaB = v.bonecaB; p.cantoB = v.cantoB; }
+    return { portaId: p.id, ambId: p.ambA };
+  }
+  const p = L.portas.find(x => x.id === r.portaId);
+  let b = ambPorId(L, r.novoId);
+  if (!b) { b = novoAmbiente(L, ambPorId(L, p.ambA).pavimentoId); b.id = r.novoId; L.ambientes.push(b); }
+  b.nome = v.nome;
+  b.ancora = p.id;
+  p.ambB = b.id;
+  p.bonecaB = v.bonecaB;
+  p.cantoB = v.cantoB;
+  medidas(b, p.id);
+  return { ambId: b.id, portaId: p.id };
+}
+
+function atualizarPrevia() {
+  const el = $('#dl-svg');
+  if (!el || !rasc) return;
+  const Lc = normalizar(clonar(ctx.lev));
+  const ref = aplicar(Lc, rasc);
+  const lay = Planta.layout(Lc, rasc.pav);
+  const [W, H] = tamanhoSvg(el);
+  const cotas = [], foco = [ref.ambId];
+  const p = ref.portaId && Lc.portas.find(x => x.id === ref.portaId);
+  if (rasc.tipo === 'porta') {
+    cotas.push(Planta.cotaBoneca(lay, p.id, 'A', fmt(num(p.boneca) || 0)), Planta.cotaLargura(lay, p.id, fmt(num(p.largura) || 0)));
+    if (p.ambB) { cotas.push(Planta.cotaBoneca(lay, p.id, 'B', fmt(num(p.bonecaB) || 0))); foco.push(p.ambB); }
+  } else if (rasc.tipo === 'vizinho') {
+    foco.push(p.ambA);
+    cotas.push(Planta.cotaBoneca(lay, p.id, 'B', fmt(num(p.bonecaB) || 0)));
+  }
+  el.innerHTML = Planta.svg(Lc, rasc.pav, lay, Planta.enquadrar(lay, W, H, foco), { cotas: cotas.filter(Boolean), destaque: [ref.ambId] });
+  const av = $('#dl-avisos');
+  if (av) av.innerHTML = Planta.conferir(Lc, rasc.pav, lay).map(x => `<div class="alerta">${h(x)}</div>`).join('');
+}
+
+async function salvarDialogo() {
+  const r = rasc, v = r.v;
+  if (r.tipo === 'amb' || r.tipo === 'vizinho') {
+    const m1 = num('ladoPorta' in v ? v.ladoPorta : v.comp), m2 = num('prof' in v ? v.prof : v.larg);
+    if (!(m1 > 0 && m2 > 0)) return toast('Informe as duas medidas do ambiente.');
+  }
+  if (r.tipo === 'porta') {
+    if (!(num(v.largura) > 0)) return toast('Informe a largura do vão.');
+    if (num(v.boneca) == null) return toast('Informe a distância da boneca.');
+    if (!(num(v.espessura) >= 0)) return toast('Informe a espessura da parede.');
+    ls.set('espessura', v.espessura);
+  }
+  if (r.tipo === 'vizinho' && num(v.bonecaB) == null) return toast('Informe a boneca da porta neste ambiente.');
+  const ref = aplicar(ctx.lev, r);
+  ctx.sel = ref.ambId;
+  ctx.verSel = true;
+  salvarDepois();
+  fecharDialogo();
+  desenharPlanta();
+  if (r.tipo === 'vizinho') toast('Ambiente desenhado. Toque em + Porta para continuar a partir dele.');
 }
 
 // ───────────────────────── Fotos ─────────────────────────
@@ -786,6 +1197,8 @@ function montarAbas(L) {
   const plano = planoFotos(L);
   const arq = new Map(plano.map(p => [p.id, p.arq]));
   const ambs = ordenar(L);
+  const posicao = new Map();
+  for (const pv of L.pavimentos) for (const [id, r] of Planta.layout(L, pv.id).pos) posicao.set(id, r);
   const txtPartes = a => partesValidas(a).map((p, i) =>
     `${i ? (p.desc ? ' − ' : ' + ') : (p.desc ? '− ' : '')}${fmt(num(p.c))} × ${fmt(num(p.l))}`).join('');
 
@@ -800,9 +1213,10 @@ function montarAbas(L) {
       { t: 'Piso', w: 22 }, { t: 'Parede', w: 22 }, { t: 'Forro / teto', w: 24 }, { t: 'Conservação', w: 12 },
       { t: 'Qtde fotos', w: 10, fmt: 'int' }, { t: 'Arquivos das fotos', w: 34 }, { t: 'Itens de instalação', w: 12, fmt: 'int' },
       { t: 'Pendências', w: 28 }, { t: 'Observações', w: 44 },
+      { t: 'X na planta (m)', w: 13, fmt: 'dec' }, { t: 'Y na planta (m)', w: 13, fmt: 'dec' },
     ],
     linhas: ambs.map(a => {
-      const c = calc(a), ret = a.forma === 'ret';
+      const c = calc(a), ret = a.forma === 'ret', ps = posicao.get(a.id);
       return [
         a.codigo, nomePav(L, a.pavimentoId), a.nome, a.uso, ret ? 'Retangular' : 'Outra forma',
         ret ? r2(num(a.comp)) : null, ret ? r2(num(a.larg)) : null,
@@ -811,6 +1225,26 @@ function montarAbas(L) {
         a.piso, a.parede, a.forro, a.conservacao,
         a.fotos.length, a.fotos.map(f => arq.get(f.id)).join(', '), a.inst.length,
         pendencias(a).join(', '), a.obs,
+        ps ? r2(ps.x) : null, ps ? r2(ps.y) : null,
+      ];
+    }),
+  };
+
+  const nomeParede = { cima: 'De cima', baixo: 'De baixo', esq: 'Da esquerda', dir: 'Da direita' };
+  const portas = {
+    nome: 'Portas', filtro: true,
+    colunas: [
+      { t: 'Pavimento', w: 14 }, { t: 'Ambiente', w: 12 }, { t: 'Parede (na planta)', w: 16 }, { t: 'Tipo', w: 14 },
+      { t: 'Largura do vão (m)', w: 13, fmt: 'dec' }, { t: 'Espessura da parede (m)', w: 13, fmt: 'dec' },
+      { t: 'Boneca (m)', w: 11, fmt: 'dec' }, { t: 'Boneca medida', w: 20 },
+      { t: 'Liga a', w: 12 }, { t: 'Boneca no outro ambiente (m)', w: 15, fmt: 'dec' }, { t: 'Boneca medida (outro)', w: 20 },
+    ],
+    linhas: L.portas.map(p => {
+      const A = ambPorId(L, p.ambA), B = p.ambB && ambPorId(L, p.ambB);
+      return [
+        nomePav(L, A.pavimentoId), A.codigo, nomeParede[p.parede], p.tipo === 'vao' ? 'Vão sem porta' : 'Porta',
+        r2(num(p.largura)), r2(num(p.espessura)), r2(num(p.boneca)), rotuloCanto(p.parede, p.canto),
+        B ? B.codigo : '', B ? r2(num(p.bonecaB)) : null, B ? rotuloCanto(p.parede, p.cantoB) : '',
       ];
     }),
   };
@@ -848,7 +1282,7 @@ function montarAbas(L) {
       ['Ambientes completos', `${L.ambientes.filter(a => !pendencias(a).length).length} de ${L.ambientes.length}`],
     ],
   };
-  return { abas: [ambientes, instalacoes, resumo], plano };
+  return { abas: [ambientes, portas, instalacoes, resumo], plano };
 }
 
 function dataUrlBytes(du) {
@@ -872,12 +1306,17 @@ async function exportar(tipo) {
   } else if (tipo === 'zip') {
     const { abas, plano } = montarAbas(L);
     const arquivos = [{ nome: base + '.xlsx', dados: FCZip.xlsx(abas) }];
+    if (L.ambientes.length) arquivos.push({ nome: base + '_planta.dxf', dados: Planta.dxf(L) });
     for (const p of plano) {
       const f = await db.fotoGet(p.id);
       if (f) arquivos.push({ nome: 'fotos/' + p.arq, dados: dataUrlBytes(f.dataUrl) });
     }
     blob = new Blob(FCZip.zipPartes(arquivos), { type: 'application/zip' });
     nome = base + '.zip';
+  } else if (tipo === 'dxf') {
+    if (!L.ambientes.length) { $('#toast').hidden = true; return toast('A planta ainda está vazia.'); }
+    blob = new Blob([Planta.dxf(L)], { type: 'application/dxf' });
+    nome = base + '_planta.dxf';
   } else {
     const ids = new Set(L.ambientes.flatMap(fotosDoAmb));
     const fotos = (await db.fotosDoLev(L.id)).filter(f => ids.has(f.id));
@@ -935,6 +1374,7 @@ async function importar(file) {
 // ───────────────────────── Eventos ─────────────────────────
 document.addEventListener('input', e => {
   const el = e.target;
+  if (el.dataset.r && rasc) { rasc.v[el.dataset.r] = el.value; atualizarPrevia(); return; }
   if (el.id === 'ov-leg' && ovEstado) { ovEstado.ref.legenda = el.value; salvarDepois(); return; }
   if (!el.dataset.bind || el.type === 'checkbox') return;
   const [o, k] = alvo(el.dataset.bind);
@@ -973,6 +1413,7 @@ document.addEventListener('change', async e => {
   }
   if (el.hasAttribute('data-mudapav')) {
     const L = ctx.lev, a = ctx.amb;
+    if (estaLigado(L, a)) { redesenhar(); return; }
     const antiga = L.pavimentos.find(p => p.id === a.pavimentoId);
     a.pavimentoId = el.value;
     if (antiga && new RegExp('^' + escRe((antiga.sigla || '').toUpperCase()) + '-\\d+$', 'i').test(a.codigo || '')) {
@@ -1016,15 +1457,45 @@ async function acao(nome, b) {
     }
     case 'importar': $('#in-import').click(); break;
 
-    case 'filtro-pav': ctx.filtroPav = id || ''; redesenhar(); break;
-    case 'add-amb': case 'prox-amb': {
-      const pav = nome === 'prox-amb' && a ? a.pavimentoId
-        : ctx.filtroPav || (L.pavimentos.some(p => p.id === ls.get('ultimoPav')) ? ls.get('ultimoPav') : L.pavimentos[0].id);
-      const n = novoAmbiente(L, pav);
-      L.ambientes.push(n);
+    // planta
+    case 'pl-pav': ctx.pavPlanta = id; ctx.sel = null; redesenhar(); break;
+    case 'pl-zoom': {
+      const el = $('#planta'), v = ctx.views[pavAtual(L)];
+      if (el && v) { zoomPlanta(v, +b.dataset.v, el.clientWidth / 2, el.clientHeight / 2); agendarPlanta(); }
+      break;
+    }
+    case 'pl-enquadrar': ctx.focar = true; desenharPlanta(); break;
+    case 'pl-novo-raiz': abrirAmbiente(null); break;
+    case 'pl-nova-porta': abrirPorta(null); break;
+    case 'pl-editar-amb': if (ctx.sel) abrirAmbiente(ctx.sel); break;
+    case 'pl-editar-porta': abrirPorta(id); break;
+    case 'dl-cancelar': fecharDialogo(); break;
+    case 'dl-salvar': await salvarDialogo(); break;
+    case 'dl-op': rasc.v[b.dataset.k] = b.dataset.v; desenharDialogo(); break;
+    case 'dl-excluir-amb': {
+      const alvoAmb = ambPorId(L, rasc.id);
+      if (alvoAmb && await excluirAmbiente(L, alvoAmb)) { fecharDialogo(); desenharPlanta(); toast('Ambiente excluído.'); }
+      break;
+    }
+    case 'dl-excluir-porta': {
+      const p = L.portas.find(x => x.id === rasc.id);
+      if (!p) return;
+      const B = p.ambB && ambPorId(L, p.ambB);
+      if (B && B.ancora === p.id) { alert(`Esta porta posiciona ${tituloAmb(B)}. Exclua antes esse ambiente.`); return; }
+      if (!confirm('Excluir esta porta?')) return;
+      L.portas = L.portas.filter(x => x !== p);
       salvarDepois();
-      await flush();
-      location.hash = `#/l/${L.id}/a/${n.id}`;
+      fecharDialogo();
+      desenharPlanta();
+      break;
+    }
+
+    case 'filtro-pav': ctx.filtroPav = id || ''; redesenhar(); break;
+    case 'ver-na-planta': {
+      ctx.sel = a.id;
+      ctx.pavPlanta = a.pavimentoId;
+      ctx.focar = a.id;
+      location.hash = `#/l/${L.id}`;
       break;
     }
     case 'add-pav': {
@@ -1094,30 +1565,12 @@ async function acao(nome, b) {
       break;
     }
 
-    case 'dup-amb': {
-      const n = clonar(a);
-      Object.assign(n, {
-        id: uid(), codigo: proximoCodigo(L, a.pavimentoId), nome: a.nome ? a.nome + ' (cópia)' : '',
-        fotos: [], inst: [], criadoEm: Date.now(), partes: n.partes.map(p => ({ ...p, id: uid() })),
-      });
-      L.ambientes.push(n);
-      salvarDepois();
-      await flush();
-      toast('Ambiente duplicado (sem fotos e sem instalações).');
-      location.hash = `#/l/${L.id}/a/${n.id}`;
-      break;
-    }
     case 'del-amb': {
-      if (!confirm(`Excluir o ambiente ${tituloAmb(a)} e as fotos dele?`)) return;
-      await apagarFotos(fotosDoAmb(a));
-      L.ambientes = L.ambientes.filter(x => x !== a);
-      ctx.amb = null;
-      salvarDepois();
-      await flush();
-      location.hash = `#/l/${L.id}`;
+      if (await excluirAmbiente(L, a)) location.hash = `#/l/${L.id}`;
       break;
     }
 
+    case 'exp-dxf': await exportar('dxf'); break;
     case 'exp-xlsx': await exportar('xlsx'); break;
     case 'exp-zip': await exportar('zip'); break;
     case 'exp-json': await exportar('json'); break;
@@ -1133,7 +1586,12 @@ async function acao(nome, b) {
 }
 
 // ───────────────────────── Funcionamento offline e atualização ─────────────────────────
-if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+// No computador de desenvolvimento (localhost) o modo offline fica desligado para sempre carregar
+// o código novo. Para testá-lo localmente, abra com ?sw=1.
+const EM_DESENVOLVIMENTO = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && !/[?&]sw=1/.test(location.search);
+if (EM_DESENVOLVIMENTO && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
+} else if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   const tinhaControle = !!navigator.serviceWorker.controller;
   const avisar = w => {
     const b = $('#banner');

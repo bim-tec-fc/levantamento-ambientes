@@ -6,18 +6,37 @@ e exporta tudo para Excel.
 
 Responsável: Melqui Domingos, Núcleo BIM.
 
-## O que faz (v1)
+## O que faz
+
+### Planta baixa (v1.1)
+
+A planta é montada ambiente por ambiente, a partir das portas:
+
+1. Desenhe o primeiro ambiente com as medidas internas (comprimento ↔ e largura ↕).
+2. Toque nele e em **+ Porta**: escolha a parede (de cima, de baixo, da esquerda, da direita), a largura do vão, a espessura da parede (medida no batente) e a **boneca**, que é a distância do canto até o batente, medida por dentro do ambiente e a partir do canto indicado.
+3. Toque no **+** que aparece do lado de fora da porta e informe o ambiente do outro lado: a parede onde está a porta, a profundidade e a boneca da mesma porta medida por dentro dele.
+4. O ambiente novo é posicionado e alinhado sozinho. Repita a partir de qualquer porta.
+
+Cada formulário mostra uma pré-visualização com as cotas que estão sendo digitadas.
+As posições não são guardadas: são recalculadas a cada desenho. Por isso, corrigir uma medida
+ou uma boneca reposiciona tudo o que depende dela. A ferramenta avisa quando dois ambientes se
+sobrepõem ou quando uma porta não cabe na parede, o que costuma indicar medida errada.
+
+Arraste para mover a planta; use dois dedos (ou a roda do mouse) para aproximar.
+
+### Informações de cada ambiente
 
 - **Levantamento:** filial ou obra, endereço, responsável, data e pavimentos (cada pavimento tem uma sigla, ex.: T, M, 1).
 - **Ambientes:** código automático (`T-01`, `M-03`…), nome e uso (lista padrão ou "Outro").
-- **Medidas em metros:** retangular (comprimento × largura) ou outra forma (soma de retângulos com recortes descontados, mais a lista de lados para o perímetro). Pé-direito. **Área, perímetro e volume são calculados na hora.**
+- **Medidas em metros:** as mesmas da planta, mais o pé-direito. **Área, perímetro e volume são calculados na hora.**
 - **Acabamentos:** piso, parede e forro/teto (lista padrão ou texto livre), mais estado de conservação.
 - **Fotos:** pela câmera ou pela galeria. A foto é reduzida para 1600 px antes de ser guardada, para não estourar a memória do aparelho.
 - **Instalações e encaminhamentos:** pontos (tomada, quadro, ar-condicionado, ralo…) com quantidade e altura; calhas, eletrodutos, tubulações e dutos com comprimento aproximado e descrição do trajeto. Cada item pode ter fotos.
 - **Conferência:** percentual de preenchimento por ambiente e alertas (medida que parece estar em centímetros, pé-direito fora do usual, perímetro incompatível com a área, código repetido).
 - **Exportação:**
-  - Planilha Excel (`.xlsx`) com as abas *Ambientes*, *Instalações* e *Resumo* (área por pavimento).
-  - Planilha + fotos (`.zip`), com as fotos nomeadas pelo código do ambiente (`T-01_01.jpg`, `T-01_I02_01.jpg`).
+  - Planta baixa (`.dxf`, metros) com as camadas PAREDES, PORTAS e TEXTOS, para o AutoCAD ou para importar no Revit. Pavimentos lado a lado.
+  - Planilha Excel (`.xlsx`) com as abas *Ambientes* (com a posição X/Y de cada um na planta), *Portas*, *Instalações* e *Resumo* (área por pavimento).
+  - Planilha + planta + fotos (`.zip`), com as fotos nomeadas pelo código do ambiente (`T-01_01.jpg`, `T-01_I02_01.jpg`).
   - Backup completo (`.json`) para abrir o levantamento em outro aparelho (botão **Importar backup**).
 - Salva sozinho a cada alteração, tem tema claro (bom no sol) e escuro, e segue o padrão visual FC (`DESIGN.md`).
 
@@ -63,20 +82,22 @@ Os levantamentos salvos não são afetados.
 
 ## Testar no computador
 
-Use um servidor local (abrir o `index.html` direto do disco não ativa o modo offline):
+Use um servidor local:
 
 ```
 python -m http.server 8765
 ```
 
-e abra `http://localhost:8765`.
+e abra `http://localhost:8765`. Em `localhost` o modo offline fica desligado, para o navegador
+sempre carregar o código novo. Para testar o modo offline localmente, abra `http://localhost:8765/?sw=1`.
 
 ## Arquivos
 
 | Arquivo | Função |
 |---|---|
 | `index.html` | Página |
-| `app.js` | Telas, cálculos, fotos, exportação e importação |
+| `app.js` | Telas, formulários, cálculos, fotos, exportação e importação |
+| `planta.js` | Posição dos ambientes pelas portas, desenho da planta (SVG), conferência e DXF |
 | `xlsx.js` | Gera `.xlsx` e `.zip` sem biblioteca externa |
 | `app.css` | Ajustes de uso no celular sobre o padrão FC |
 | `fc-base.css`, `fonts/`, `DESIGN.md` | Design system dos painéis FC (Barlow local) |
@@ -84,5 +105,5 @@ e abra `http://localhost:8765`.
 
 ## Próximas versões (sugestão)
 
-- **v2:** croqui à mão livre (sobre grade ou sobre a foto), esquadrias (portas e janelas), modelos prontos de ambiente, relatório para impressão/PDF, juntar levantamentos de várias pessoas num só.
-- **v3:** marcação de instalações no croqui, nomes de colunas iguais aos parâmetros do Revit para criar os Rooms automaticamente, envio direto para o SharePoint, trena laser Bluetooth (Chrome no Android).
+- **Planta:** ligar uma porta a um ambiente já desenhado (fecha o circuito e confere as medidas), janelas, ambiente em L, lado de abertura da porta, marcar as instalações na planta.
+- **Depois:** relatório para impressão/PDF, juntar levantamentos de várias pessoas num só, nomes de colunas iguais aos parâmetros do Revit para criar os Rooms automaticamente, envio direto para o SharePoint, trena laser Bluetooth (Chrome no Android).
