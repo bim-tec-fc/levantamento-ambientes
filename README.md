@@ -28,6 +28,10 @@ e as paredes são chamadas pelos cantos (parede A–B).
    (A–B dele), a profundidade (se for retângulo) e a **boneca** da mesma porta medida por dentro dele.
    Se ele não for retangular, use **Desenhar parede a parede**: a primeira parede já é a da porta.
 3. O ambiente novo é posicionado e alinhado sozinho, inclusive em paredes inclinadas.
+4. **Ambiente já desenhado (solto):** selecione e arraste. Perto de uma porta livre (+) ele gira e
+   encaixa sozinho na parede mais adequada; se ficar por cima de outro ambiente, desliza ao longo da
+   parede até o lugar livre mais perto. A porta passa a pertencer aos dois e a boneca do outro lado
+   fica editável em **Mais opções**. Para soltar de novo, use **Separar** na porta.
 
 **Portas e janelas:** giro, giro duplo, correr, correr duplo e vão livre, com lado de abertura e
 dobradiça (ou sentido de correr); janela baixa e janela alta, com largura, altura e peitoril.

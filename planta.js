@@ -843,7 +843,7 @@
 
   raiz.Planta = {
     layout, linhas, conferir, enquadrar, svg, cotaBoneca, cotaLargura, infoItem, segmentoEm, vaosDaParede, dxf, caixa, iconeObjeto,
-    formaLocal, areaPerimetro, converterAntigo, letra, ptW, paredesDe,
+    formaLocal, areaPerimetro, converterAntigo, letra, ptW, paredesDe, sobrepoe,
     ESPESSURA_PADRAO, PD_PADRAO, MODELOS, PADRAO_ABERTURA, PONTOS, BIBLIOTECA, ehJanela, canon, fmtNivel, nivelDe, pdDe, RAD,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
