@@ -252,3 +252,4 @@ svg.planta.desenhando{cursor:crosshair}
 .pl-canto{pointer-events:none}
 .pl-fechar{stroke:var(--fc-primary);stroke-width:1.5;stroke-dasharray:6 5;pointer-events:none}
 svg.d3 polygon.d3-parede:not(.d3-topo){stroke-opacity:.18}
+.pl-fundo.invalido{fill:rgba(207,16,48,.28)}

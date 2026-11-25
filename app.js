@@ -151,22 +151,18 @@ function normalizar(L) {
   const idsAmb = new Set(L.ambientes.map(a => a.id));
   L.portas = L.portas.filter(p => idsAmb.has(p.ambA));
   Planta.converterAntigo(L);   // paredes por nome (até a v1.2) → índice
+  Planta.fixarPosicoes(L);     // cada ambiente com posição própria; a porta não posiciona mais
   for (const p of L.portas) {
     p.parede = +p.parede || 0;
-    p.paredeB = +p.paredeB || 0;
-    if (p.ambB && !idsAmb.has(p.ambB)) { p.ambB = null; p.bonecaB = ''; }
     if (!p.modelo) p.modelo = p.tipo === 'vao' ? 'vao' : 'giro';   // dados da v1.1
     delete p.tipo;
-    for (const k of ['largura', 'boneca', 'espessura', 'bonecaB', 'peitoril']) p[k] = p[k] ?? '';
+    for (const k of ['largura', 'boneca', 'espessura', 'peitoril']) p[k] = p[k] ?? '';
     p.altura = p.altura ?? Planta.PADRAO_ABERTURA[p.modelo][1];
     p.canto = p.canto === 'fim' ? 'fim' : 'ini';
-    p.cantoB = p.cantoB === 'fim' ? 'fim' : 'ini';
     p.abre = p.abre === 'fora' ? 'fora' : 'dentro';
     p.lado = p.lado === 'fim' ? 'fim' : 'ini';
-    if (Planta.ehJanela(p.modelo)) { p.ambB = null; p.bonecaB = ''; }
   }
   for (const a of L.ambientes) {
-    a.ancora = a.ancora ?? null;
     a.nivel = a.nivel ?? '';
     a.objetos = Array.isArray(a.objetos) ? a.objetos : [];
     a.partes = Array.isArray(a.partes) ? a.partes : [];
@@ -503,6 +499,7 @@ function htmlDados(L) {
   <section class="card sec">
     <h2 class="fc-h2">Dados do levantamento</h2>
     ${campo('Filial / obra', 'lev.filial', L.filial, { extra: 'placeholder="Ex.: Loja Imbiribeira"' })}
+    ${campoNum('Espessura das paredes entre ambientes (m)', 'lev.espessura', L.espessura ?? '0,15', { dica: 'Usada pelo ímã ao encostar um ambiente no outro.' })}
     ${campo('Endereço', 'lev.endereco', L.endereco)}
     <div class="grid2">
       ${campo('Responsável', 'lev.responsavel', L.responsavel, { extra: 'autocapitalize="words"' })}
@@ -722,13 +719,16 @@ function arredAng(g, volta = true) {
 const arredMedida = m => Math.max(0.05, Math.round(m / 0.05) * 0.05);
 
 const ambPorId = (L, id) => L.ambientes.find(a => a.id === id);
-function estaLigado(L, a) {
-  return !!a.ancora || L.portas.some(p => (p.ambA === a.id && p.ambB) || p.ambB === a.id);
-}
+function estaLigado() { return false; }   // ambientes são independentes; a porta só fura a parede
 /** Ambientes desenhados a partir das portas deste (dependem dele para ter posição). */
 function dependentes(L, a) {
-  return L.portas.filter(p => p.ambA === a.id && p.ambB)
-    .map(p => L.ambientes.find(x => x.id === p.ambB && x.ancora === p.id)).filter(Boolean);
+  return L.ambientes.filter(x => x.desenhando && x.ancora && L.portas.some(p => p.id === x.ancora && p.ambA === a.id));
+}
+/** Ambiente do outro lado da porta (o que encosta na parede dela), se houver. */
+function outroLado(L, p) {
+  const A = ambPorId(L, p.ambA);
+  const g = A && Planta.layout(L, A.pavimentoId).portas.find(x => x.p.id === p.id);
+  return g && g.ambB ? ambPorId(L, g.ambB) : null;
 }
 async function excluirAmbiente(L, a, perguntar = true) {
   const dep = dependentes(L, a);
@@ -792,8 +792,8 @@ function tamanhoSvg(el) {
 }
 function opcoesPlanta() {
   const d = ctx.desenho, a = d && ambPorId(ctx.lev, d.amb), arr = ctx.arrasto;
-  if (arr) return { sel: arr.amb, item: arr.alvo ? { tipo: 'porta', id: arr.alvo } : null, mais: true, toque: false, destaque: [arr.amb] };
-  return { sel: ctx.sel, item: ctx.item, mais: !d, toque: !d, desenho: a && (a.pos || a.ancora) ? a.id : null };
+  if (arr) return { sel: arr.amb, item: null, mais: false, toque: false, destaque: [arr.amb], invalido: arr.invalido ? arr.amb : null };
+  return { sel: ctx.sel, item: ctx.item, mais: false, toque: !d, desenho: a && (a.pos || a.ancora) ? a.id : null };
 }
 
 function desenharPlanta() {
@@ -866,18 +866,18 @@ function painelPlanta(lay) {
   const a = ctx.sel && ambPorId(L, ctx.sel);
   if (!a) {
     p.innerHTML = `${avisos}
-      <p class="dica">Toque num ambiente para incluir porta ou objeto, ou numa parede para medir o trecho e inserir porta, janela ou ponto naquele lugar. Toque no <b>+</b> de uma porta para desenhar o ambiente do outro lado.</p>
+      <p class="dica">Desenhe os ambientes e encoste um no outro: toque num ambiente e arraste; perto de outro ele gira e encosta (ímã), deixando a espessura da parede. Depois toque numa parede para inserir porta, janela ou ponto: se ali encostar outro ambiente, a porta liga os dois.</p>
       ${botoesNovo(false)}`;
     return;
   }
   const c = calc(a), R = lay.pos.get(a.id);
-  const portas = L.portas.filter(x => x.ambA === a.id || x.ambB === a.id);
+  const portas = lay.portas.filter(g => g.p.ambA === a.id || g.ambB === a.id);
   const formaTxt = a.forma === 'poli' ? `${R ? R.walls.length : '?'} paredes` : `${fmt(num(a.comp))} × ${fmt(num(a.larg))} m`;
   p.innerHTML = `${avisos}
     <div class="pl-sel">
       <div class="pl-sel-t"><b class="num">${h(a.codigo)}</b> ${h(a.nome || '(sem nome)')}</div>
       <div class="pl-sel-s num">${formaTxt} · ${fmt(c.area)} m²${num(a.nivel) ? ' · NV ' + Planta.fmtNivel(num(a.nivel)) : ''}</div>
-      ${!a.ancora ? '<div class="pl-sel-s">Arraste o ambiente para mover. Perto de uma porta livre (+) ele gira e encaixa sozinho.</div>' : ''}
+      <div class="pl-sel-s">Arraste para mover: perto de outro ambiente ele encosta sozinho. Não deixa ficar por cima.</div>
     </div>
     <div class="pl-acoes g4">
       <button class="btn btn-primary" data-acao="pl-nova-porta">+ Porta</button>
@@ -885,10 +885,10 @@ function painelPlanta(lay) {
       <button class="btn btn-ghost" data-acao="pl-editar-amb">Medidas</button>
       <a class="btn btn-ghost" href="#/l/${h(L.id)}/a/${h(a.id)}">Detalhes</a>
     </div>
-    ${portas.length ? `<div class="seg pl-portas">${portas.map(x => {
-      const deA = x.ambA === a.id;
-      const outro = ambPorId(L, deA ? x.ambB : x.ambA);
-      const par = deA ? nomeParede(a, +x.parede) : nomeParede(a, +x.paredeB || 0);
+    ${portas.length ? `<div class="seg pl-portas">${portas.map(g => {
+      const x = g.p, deA = x.ambA === a.id;
+      const outro = ambPorId(L, deA ? g.ambB : x.ambA);
+      const par = deA ? nomeParede(a, +x.parede) : nomeParede(a, g.WB.k);
       return `<button class="chip off" data-acao="pl-sel-porta" data-id="${h(x.id)}">${h(nomeModelo(x.modelo))} ${par} · ${fmt(num(x.largura))}${outro ? ' · ' + h(outro.codigo) : ''}</button>`;
     }).join('')}</div>` : '<p class="dica">Sem portas ainda. Toque numa parede ou em <b>+ Porta</b>.</p>'}`;
 }
@@ -924,7 +924,7 @@ function painelItem(lay) {
       </div>`;
   }
   if (it.tipo === 'porta') {
-    const p = info.g.p, A = ambPorId(L, p.ambA), B = p.ambB && ambPorId(L, p.ambB), jan = Planta.ehJanela(p.modelo);
+    const p = info.g.p, A = ambPorId(L, p.ambA), B = info.g.ambB && ambPorId(L, info.g.ambB), jan = Planta.ehJanela(p.modelo);
     const [cI, cF] = cantosDe(A, +p.parede);
     const titulo = jan ? `${nomeModelo(p.modelo)} em ${A.codigo}` : B ? `Porta ${A.codigo} ↔ ${B.codigo}` : `Porta em ${A.codigo}`;
     let opc = '';
@@ -938,11 +938,10 @@ function painelItem(lay) {
       <div class="${jan ? 'grid3' : 'grid2'}">${campoPe('Largura (m)', 'larg', vexib(vv.larg))}${campoPe('Altura (m)', 'alt', p.altura)}${jan ? campoPe('Peitoril (m)', 'peit', p.peitoril) : ''}</div>
       <div class="field"><span class="fc-label">Modelo</span>${opcoesPe('modelo', p.modelo, jan ? MODELOS_JANELA : MODELOS_PORTA)}</div>
       ${opc}
-      ${!jan && !B ? '<p class="dica">Para ligar a um ambiente já desenhado: selecione o ambiente e arraste até esta porta.</p>' : ''}
+      ${B ? `<p class="dica">Liga ${h(A.codigo)} a ${h(B.codigo)} (parede encostada, ${fmt(info.g.t)} m de espessura).</p>` : (!jan ? '<p class="dica">Ainda não liga a outro ambiente. Encoste um ambiente nesta parede (arraste) ou crie um do outro lado.</p>' : '')}
       <div class="pl-acoes g3">
         <button class="btn btn-ghost" data-acao="pe-mais">Mais opções</button>
-        ${B && B.ancora === p.id ? '<button class="btn btn-ghost" data-acao="pe-separar">Separar ' + h(B.codigo) + '</button>' : ''}
-        ${!jan && !B ? '<button class="btn btn-primary" data-acao="pe-vizinho">+ Ambiente ao lado</button>' : ''}
+        ${!jan && !B ? '<button class="btn btn-ghost" data-acao="pe-vizinho">Novo ambiente do outro lado</button>' : ''}
         <button class="btn btn-ghost perigo" data-acao="pe-excluir">Excluir</button>
       </div>`;
   }
@@ -1023,16 +1022,28 @@ function aplicarPe(k, val) {
     const a = ambPorId(L, it.amb), { vE, vD, W } = info;
     const pos = (x, canto, valor) => {
       const p = x.g.p;
-      if (x.lado === 'A') { p.canto = canto; p.boneca = vnum(valor); } else { p.cantoB = canto; p.bonecaB = vnum(valor); }
+      if (x.lado === 'A') { p.canto = canto; p.boneca = vnum(valor); return; }
+      // porta do ambiente vizinho: a parede dele corre no sentido oposto; anda com a porta lá
+      const atual = canto === 'ini' ? x.ua : W.len - x.ub;
+      p.canto = 'ini';
+      p.boneca = vnum(x.g.c - (valor - atual) * (canto === 'ini' ? 1 : -1));
     };
     if (!vE && !vD) {
-      if (a.forma === 'poli') { if (it.k < a.paredes.length) a.paredes[it.k].c = val; }
-      else if (it.k % 2 === 0) a.comp = val; else a.larg = val;
+      const antes = retrato(L, a), campo = a.forma === 'poli' ? null : (it.k % 2 === 0 ? 'comp' : 'larg');
+      if (a.forma === 'poli' && it.k >= a.paredes.length) return;
+      const velho = campo ? a[campo] : a.paredes[it.k].c, posVelha = { ...a.pos };
+      if (campo) a[campo] = val; else a.paredes[it.k].c = val;
+      if (antes && manterCanto(L, a, antes, 'auto') < 0) {
+        if (campo) a[campo] = velho; else a.paredes[it.k].c = velho;
+        a.pos = posVelha;
+        return toast('Com essa medida o ambiente ficaria por cima de outro. Mova-o antes ou ajuste a medida.', 4500);
+      }
+      manterConteudo(L, a, antes);
     } else if (!vE) pos(vD, 'ini', v);
     else if (!vD) pos(vE, 'fim', v);
     else if (vD.lado === 'A') pos(vD, 'ini', vE.ub + v);
     else if (vE.lado === 'A') pos(vE, 'fim', W.len - vD.ua + v);
-    else return toast('Este trecho fica entre duas portas medidas no outro ambiente. Edite pelas portas.');
+    else pos(vD, 'ini', vE.ub + v);
   }
   salvarDepois();
 }
@@ -1076,7 +1087,7 @@ function inserirAbertura(tipo) {
   const s = Math.max(info.u0, Math.min(meio - w / 2, info.u1 - w));
   const p = {
     id: uid(), ambA: it.amb, parede: it.k, modelo, largura: larg, altura: alt, peitoril: peit, abre: 'dentro', lado: 'ini',
-    boneca: vnum(s), canto: 'ini', espessura: ls.get('espessura', '0,15'), ambB: null, paredeB: 0, bonecaB: '', cantoB: 'ini',
+    boneca: vnum(s), canto: 'ini', espessura: ls.get('espessura', '0,15'),
   };
   L.portas.push(p);
   salvarDepois();
@@ -1121,8 +1132,6 @@ async function excluirItem() {
   if (!it) return;
   if (it.tipo === 'porta') {
     const p = L.portas.find(x => x.id === it.id);
-    const B = p && p.ambB && ambPorId(L, p.ambB);
-    if (B && B.ancora === p.id) { alert(`Esta porta posiciona ${tituloAmb(B)}. Exclua antes esse ambiente.`); return; }
     if (!confirm(`Excluir esta ${Planta.ehJanela(p.modelo) ? 'janela' : 'porta'}?`)) return;
     L.portas = L.portas.filter(x => x !== p);
   } else if (it.tipo === 'ponto') {
@@ -1245,6 +1254,7 @@ function fecharDesenho() {
   const L = ctx.lev, a = ambPorId(L, ctx.desenho.amb);
   if (!a || a.paredes.length < 2) return;
   delete a.desenhando;
+  Planta.fixarPosicoes(L);
   ctx.desenho = null;
   ctx.sel = a.id;
   ctx.item = null;
@@ -1336,12 +1346,12 @@ function ligarGestos(el) {
     zoom: (f, px, py) => { const v = vista(); if (v) { zoomPlanta(v, f, px, py); agendarPlanta(); } },
     aoTocar: tocarPlanta,
     arrastar: {
-      // só o ambiente selecionado e solto (sem porta que o prenda) pode ser arrastado
+      // arrasta o ambiente selecionado (toque nele e arraste)
       pode: t => {
         if (ctx.desenho || ctx.item) return false;
         const g = t.closest('[data-amb]');
         const a = g && g.dataset.amb === ctx.sel && ambPorId(ctx.lev, ctx.sel);
-        return !!(a && !a.ancora);
+        return !!a;
       },
       inicio: iniciarArrasto,
       mover: moverArrasto,
@@ -1356,124 +1366,91 @@ function telaParaPlanta(x, y) {
   return [(x - r.left - v.ox) / v.s, (v.oy - (y - r.top)) / v.s];
 }
 
-// ── Arrastar ambiente e encaixar na porta (ímã) ──
-/** Ambientes que andam junto com este (os desenhados a partir das portas dele, em cadeia). */
-function arvoreDe(L, id) {
-  const sub = new Set([id]);
-  let mudou = true;
-  while (mudou) {
-    mudou = false;
-    for (const p of L.portas) {
-      if (sub.has(p.ambA) && p.ambB && !sub.has(p.ambB)) {
-        const B = ambPorId(L, p.ambB);
-        if (B && B.ancora === p.id) { sub.add(B.id); mudou = true; }
-      }
-    }
-  }
-  return sub;
-}
+// ── Arrastar ambiente: ímã parede com parede e sem sobreposição ──
+/** Espessura das paredes entre ambientes (usada pelo ímã). */
+const espessuraEntre = L => num(L.espessura) ?? num(ls.get('espessura', '0,15')) ?? 0.15;
 
 function iniciarArrasto(x, y) {
   const L = ctx.lev, a = ambPorId(L, ctx.sel), R = a && Planta.layout(L, pavAtual(L)).pos.get(a.id);
   if (!R) return;
-  // fixa a posição atual (ambientes antigos podiam estar sem posição guardada)
-  a.pos = { x: r2(R.t[0]), y: r2(R.t[1]) };
-  a.rot = String(Math.round(R.rot / Planta.RAD * 100) / 100);
-  ctx.arrasto = { amb: a.id, P0: telaParaPlanta(x, y), pos0: { ...a.pos }, rot0: a.rot, alvo: null, backup: null, sub: arvoreDe(L, a.id) };
-}
-
-function desfazerEncaixe() {
-  const A = ctx.arrasto, L = ctx.lev;
-  if (!A || !A.backup) return;
-  const p = L.portas.find(x => x.id === A.alvo), a = ambPorId(L, A.amb);
-  if (p) Object.assign(p, A.backup.porta);
-  if (a) a.ancora = A.backup.ancora;
-  A.backup = null;
-  A.alvo = null;
+  a.pos = { x: R.t[0], y: R.t[1] };
+  a.rot = String(R.rot / Planta.RAD);
+  ctx.arrasto = { amb: a.id, P0: telaParaPlanta(x, y), pos0: { ...a.pos }, rot0: a.rot, invalido: null, encostou: false };
 }
 
 function moverArrasto(x, y) {
   const A = ctx.arrasto, L = ctx.lev;
   if (!A) return;
-  const a = ambPorId(L, A.amb), v = ctx.views[pavAtual(L)];
-  desfazerEncaixe();
+  const a = ambPorId(L, A.amb), pav = pavAtual(L), v = ctx.views[pav];
   const P = telaParaPlanta(x, y);
-  a.pos = { x: r2(A.pos0.x + P[0] - A.P0[0]), y: r2(A.pos0.y + P[1] - A.P0[1]) };
-  a.rot = A.rot0;
-  // paredes do ambiente arrastado perto de alguma porta livre. Nota: distância + giro necessário
-  // (prefere a parede que já está quase alinhada com a da porta)
-  const lay = Planta.layout(L, pavAtual(L)), R = lay.pos.get(a.id);
-  const limite = Math.max(0.6, 34 / v.s);
-  const cands = [];
-  for (const g of lay.portas) {
-    if (g.p.ambB || g.janela || A.sub.has(g.p.ambA)) continue;
-    const C = [(g.x1 + g.x2) / 2 + g.nx * g.t, (g.y1 + g.y2) / 2 + g.ny * g.t];
-    for (const W of R.walls) {
-      if (W.len < g.w - 0.005) continue;
-      const s = Math.max(0, Math.min(W.len, (C[0] - W.a[0]) * W.d[0] + (C[1] - W.a[1]) * W.d[1]));
-      const q = Planta.ptW(W, s), dist = Math.hypot(C[0] - q[0], C[1] - q[1]);
-      if (dist >= limite) continue;
-      const giro = Math.acos(Math.max(-1, Math.min(1, W.nIn[0] * g.nx + W.nIn[1] * g.ny)));   // 0 = já alinhada
-      cands.push({ g, W, s, nota: dist + giro * 0.8 });
-    }
-  }
-  cands.sort((x, y) => x.nota - y.nota);
-  const encaixar = ({ g, W, s }) => {
-    const p = g.p;
-    A.backup = { porta: { ambB: p.ambB, paredeB: p.paredeB, bonecaB: p.bonecaB, cantoB: p.cantoB }, ancora: a.ancora };
-    A.alvo = p.id;
-    const cB = Math.max(0, Math.min(s - g.w / 2, W.len - g.w));
-    Object.assign(p, { ambB: a.id, paredeB: W.k, bonecaB: vnum(cB), cantoB: 'ini' });
-    a.ancora = p.id;
-  };
-  // o primeiro encaixe que não faz o ambiente (e o que anda com ele) sobrepor os outros
-  let escolhido = null;
-  for (const c of cands.slice(0, 6)) {
-    encaixar(c);
-    const l2 = Planta.layout(L, pavAtual(L));
-    const bate = [...A.sub].some(id => l2.pos.get(id) && [...l2.pos.keys()].some(o => !A.sub.has(o) && Planta.sobrepoe(l2.pos.get(id), l2.pos.get(o))));
-    desfazerEncaixe();
-    if (!bate) { escolhido = c; break; }
-  }
-  if (!escolhido && cands.length) escolhido = cands[0];
-  if (escolhido) encaixar(escolhido);
+  const t = [A.pos0.x + P[0] - A.P0[0], A.pos0.y + P[1] - A.P0[1]];
+  const lay = Planta.layout(L, pav);
+  const im = Planta.imantar(lay, a, (num(A.rot0) || 0) * Planta.RAD, t, espessuraEntre(L), Math.max(0.3, 28 / v.s));
+  a.pos = { x: im.t[0], y: im.t[1] };
+  a.rot = String(im.r / Planta.RAD);
+  A.encostou = im.encostou;
+  const R = Planta.colocar(a, im.r, im.t);
+  R.id = a.id;
+  A.invalido = Planta.bateEm(lay, R);
   agendarPlanta();
-}
-
-/** Se o ambiente encaixado ficou por cima de outro, desliza ao longo da parede até o lugar livre mais perto. */
-function deslizarAteCaber(A) {
-  const L = ctx.lev, pav = pavAtual(L), p = L.portas.find(x => x.id === A.alvo);
-  const bate = () => {
-    const l2 = Planta.layout(L, pav);
-    return [...A.sub].some(id => l2.pos.get(id) && [...l2.pos.keys()].some(o => !A.sub.has(o) && Planta.sobrepoe(l2.pos.get(id), l2.pos.get(o))));
-  };
-  if (!p || !bate()) return;
-  const R = Planta.layout(L, pav).pos.get(A.amb), W = R && R.walls[+p.paredeB];
-  if (!W) return;
-  const w = num(p.largura) || 0, c0 = num(p.bonecaB) || 0, max = W.len - w;
-  for (let d = 0.05; d <= W.len; d += 0.05) {
-    for (const c of [c0 + d, c0 - d]) {
-      if (c < 0 || c > max) continue;
-      p.bonecaB = vnum(c);
-      if (!bate()) return;
-    }
-  }
-  p.bonecaB = vnum(c0);   // não achou lugar livre: fica onde foi solto (o aviso de sobreposição aparece)
 }
 
 function soltarArrasto(cancelado) {
   const A = ctx.arrasto, L = ctx.lev;
   if (!A) return;
   const a = ambPorId(L, A.amb);
-  if (cancelado) { desfazerEncaixe(); a.pos = A.pos0; a.rot = A.rot0; }
-  else if (A.alvo) deslizarAteCaber(A);
+  const volta = cancelado || A.invalido;
+  if (volta) { a.pos = A.pos0; a.rot = A.rot0; }
+  // guarda com 3 casas (milímetro)
+  a.pos = { x: Math.round(a.pos.x * 1000) / 1000, y: Math.round(a.pos.y * 1000) / 1000 };
+  a.rot = String(Math.round((num(a.rot) || 0) * 100) / 100);
   ctx.arrasto = null;
   salvarDepois();
-  if (!cancelado && A.alvo) {
-    const p = L.portas.find(x => x.id === A.alvo), dono = ambPorId(L, p.ambA);
-    selecionar({ tipo: 'porta', id: p.id }, p.ambA);
-    toast(`${a.codigo} encaixado na porta de ${dono.codigo}. Confira a boneca em Mais opções.`, 5000);
-  } else desenharPlanta();
+  desenharPlanta();
+  if (!cancelado && A.invalido) {
+    const o = ambPorId(L, A.invalido);
+    toast(`Não cabe aí: ${a.codigo} ficaria por cima de ${o ? o.codigo : 'outro ambiente'}. Voltou para onde estava.`, 4500);
+  } else if (!cancelado && A.encostou) toast(`${a.codigo} encostado.`);
+}
+
+/** Muda a forma/medida do ambiente mantendo um canto parado. 'auto': o primeiro canto que não cause sobreposição. */
+function manterCanto(L, a, antes, fixo = 'auto') {
+  const n = Planta.formaLocal(a).verts.length;
+  const ordem = fixo === 'auto' ? [...Array(Math.min(n, antes.verts.length)).keys()] : [+fixo];
+  const r = (num(a.rot) || 0) * Planta.RAD;
+  let primeiro = null;
+  for (const k of ordem) {
+    const alvo = antes.verts[k];
+    if (!alvo) continue;
+    const R0 = Planta.colocar(a, r, [0, 0]);
+    if (!R0.verts[k]) continue;
+    a.pos = { x: alvo[0] - R0.verts[k][0], y: alvo[1] - R0.verts[k][1] };
+    if (primeiro == null) primeiro = { ...a.pos };
+    const lay = Planta.layout(L, a.pavimentoId), R = lay.pos.get(a.id);
+    if (!R || !Planta.bateEm(lay, R)) return k;
+  }
+  if (primeiro) a.pos = primeiro;
+  return -1;
+}
+/** Retrato do ambiente na planta antes de uma mudança: cantos e onde estão portas, pontos e objetos. */
+function retrato(L, a) {
+  const lay = Planta.layout(L, a.pavimentoId), R = lay.pos.get(a.id);
+  if (!R) return null;
+  return {
+    verts: R.verts.map(p => [...p]),
+    portas: lay.portas.filter(g => g.p.ambA === a.id).map(g => ({ p: g.p, P1: [g.x1, g.y1] })),
+    pontos: lay.pontos.filter(pt => pt.amb === a.id).map(pt => ({ i: pt.i, P: [pt.px, pt.py] })),
+    objs: lay.objetos.filter(o => o.amb === a.id).map(o => ({ o: o.o, C: [...o.centro] })),
+  };
+}
+/** Depois de mudar a medida, devolve portas, pontos e objetos ao mesmo lugar da planta. */
+function manterConteudo(L, a, antes) {
+  const R = antes && Planta.layout(L, a.pavimentoId).pos.get(a.id);
+  if (!R) return;
+  const naParede = (k, P) => { const W = R.walls[k]; return W ? (P[0] - W.a[0]) * W.d[0] + (P[1] - W.a[1]) * W.d[1] : null; };
+  for (const { p, P1 } of antes.portas) { const s = naParede(+p.parede, P1); if (s != null) { p.canto = 'ini'; p.boneca = vnum(s); } }
+  for (const { i, P } of antes.pontos) { const s = naParede(+i.parede, P); if (s != null) i.pos = vnum(s); }
+  for (const { o, C } of antes.objs) { const c = R.paraLocal(C); o.cx = r2(c[0]); o.cy = r2(c[1]); }
 }
 
 function tocarPlanta(t, ev) {
@@ -1514,12 +1491,10 @@ function abrirAmbiente(id) {
     return abrirDialogo({ tipo: 'amb', id: null, pav: pavAtual(L), titulo: temAmb ? 'Ambiente sem ligação' : 'Primeiro ambiente', v: { forma: 'ret', nome: '', comp: '', larg: '', nivel: '', peDireito: '' } });
   }
   const a = ambPorId(L, id);
-  const p = a.ancora && L.portas.find(x => x.id === a.ancora && x.ambB === a.id);
-  const v = { forma: a.forma === 'poli' ? 'poli' : 'ret', nome: a.nome, nivel: a.nivel, peDireito: a.peDireito, rot: a.rot || '0', fechamento: a.fechamento || '' };
+  const v = { forma: a.forma === 'poli' ? 'poli' : 'ret', nome: a.nome, nivel: a.nivel, peDireito: a.peDireito, rot: vnum(num(a.rot) || 0), fechamento: a.fechamento || '', fixo: 'auto' };
   if (v.forma === 'poli') v.paredes = clonar(a.paredes);
-  else if (p) { const par = (+p.paredeB || 0) % 2 === 0; v.ladoPorta = par ? a.comp : a.larg; v.prof = par ? a.larg : a.comp; }
   else { v.comp = a.comp; v.larg = a.larg; }
-  abrirDialogo({ tipo: 'amb', id, pav: a.pavimentoId, ancora: p ? p.id : null, titulo: `${a.codigo}: medidas`, v });
+  abrirDialogo({ tipo: 'amb', id, pav: a.pavimentoId, ancora: null, titulo: `${a.codigo}: medidas`, antes: retrato(L, a), v });
 }
 function abrirPorta(id) {
   const L = ctx.lev;
@@ -1531,16 +1506,16 @@ function abrirPorta(id) {
     const parede = [...Array(n).keys()].find(k => !usadas.has(k)) ?? 0;
     return abrirDialogo({
       tipo: 'porta', id: null, novoId: uid(), ambA: a.id, pav: a.pavimentoId, titulo: `Nova porta em ${a.codigo}`,
-      v: { parede, modelo: 'giro', abre: 'dentro', lado: 'ini', largura: '0,80', altura: '2,10', peitoril: '', boneca: '', canto: 'ini', espessura: ls.get('espessura', '0,15'), bonecaB: '', cantoB: 'ini' },
+      v: { parede, modelo: 'giro', abre: 'dentro', lado: 'ini', largura: '0,80', altura: '2,10', peitoril: '', boneca: '', canto: 'ini', espessura: ls.get('espessura', '0,15') },
     });
   }
   const p = L.portas.find(x => x.id === id);
-  const A = ambPorId(L, p.ambA), B = p.ambB && ambPorId(L, p.ambB);
+  const A = ambPorId(L, p.ambA), B = outroLado(L, p);
   abrirDialogo({
     tipo: 'porta', id, ambA: p.ambA, pav: A.pavimentoId, titulo: B ? `Porta ${A.codigo} ↔ ${B.codigo}` : `${nomeModelo(p.modelo)} em ${A.codigo}`,
     v: {
       parede: +p.parede, modelo: p.modelo, abre: p.abre, lado: p.lado, largura: p.largura, altura: p.altura, peitoril: p.peitoril,
-      boneca: p.boneca, canto: p.canto, espessura: p.espessura, bonecaB: p.bonecaB, cantoB: p.cantoB, paredeB: +p.paredeB || 0,
+      boneca: p.boneca, canto: p.canto, espessura: p.espessura,
     },
   });
 }
@@ -1603,7 +1578,15 @@ function formDialogo(r) {
       medidas = r.ancora
         ? `<div class="grid2">${campoR('Parede da porta (m)', 'ladoPorta', v.ladoPorta, { numero: true })}${campoR('Profundidade (m)', 'prof', v.prof, { numero: true })}</div>`
         : `<div class="grid2">${campoR('Comprimento ↔ (m)', 'comp', v.comp, { numero: true })}${campoR('Largura ↕ (m)', 'larg', v.larg, { numero: true })}</div>`;
-      medidas += `<p class="dica">Medidas internas, de parede a parede.</p>${r.id ? '<button class="btn btn-ghost" data-acao="dl-virar-poli">Não é retângulo? Editar parede a parede</button>' : ''}`;
+      medidas += `<p class="dica">Medidas internas, de parede a parede.</p>
+        ${campoR('Rotação na planta (graus)', 'rot', v.rot, { numero: true, dica: 'O ímã acerta sozinho ao encostar.' })}
+        ${r.id ? '<button class="btn btn-ghost" data-acao="dl-virar-poli">Não é retângulo? Editar parede a parede</button>' : ''}`;
+    }
+    if (r.id) {
+      const n = v.forma === 'poli' ? v.paredes.length + 1 : 4;
+      medidas += `<div class="field"><span class="fc-label">Ao mudar medidas, qual canto fica parado</span>
+        ${opcoes('fixo', v.fixo, [['auto', 'Automático'], ...[...Array(n).keys()].map(k => [String(k), letra(k)])])}
+        <div class="dica">Automático: o primeiro canto que não deixe o ambiente por cima de outro.</div></div>`;
     }
     return `${campoR('Nome do ambiente', 'nome', v.nome, { extra: 'placeholder="Ex.: Sala de reunião" autocapitalize="sentences"' })}
       ${medidas}
@@ -1613,7 +1596,7 @@ function formDialogo(r) {
   if (r.tipo === 'porta') {
     const A = ambPorId(L, r.ambA);
     const p = r.id && L.portas.find(x => x.id === r.id);
-    const B = p && p.ambB && ambPorId(L, p.ambB);
+    const B = p && outroLado(L, p);
     const jan = Planta.ehJanela(v.modelo);
     const [cI, cF] = cantosDe(A, +v.parede);
     let opc = '';
@@ -1623,8 +1606,7 @@ function formDialogo(r) {
       if (v.modelo === 'correr') opc += `<div class="field"><span class="fc-label">Corre para</span>${opcoes('lado', v.lado, [['ini', `O canto ${cI}`], ['fim', `O canto ${cF}`]])}</div>`;
     }
     const nPar = paredesDoAmb(A).length;
-    const [bI, bF] = B ? cantosDe(B, +v.paredeB || 0) : ['', ''];
-    return `<div class="field"><span class="fc-label">Parede de ${h(A.codigo)}${B ? ' (mudar a parede move ' + h(B.codigo) + ')' : ''}</span>
+    return `<div class="field"><span class="fc-label">Parede de ${h(A.codigo)}</span>
         ${opcoes('parede', v.parede, [...Array(nPar).keys()].map(k => [k, nomeParede(A, k)]))}</div>
       <div class="field"><span class="fc-label">Modelo</span>${opcoes('modelo', v.modelo, B ? MODELOS_PORTA : Planta.MODELOS)}</div>
       <div class="grid2">
@@ -1638,11 +1620,7 @@ function formDialogo(r) {
       ${campoR(`Boneca em ${A.codigo} (m)`, 'boneca', v.boneca, { numero: true, dica: `Do canto até o batente, medida por dentro de ${h(A.codigo)}.` })}
       ${opcoes('canto', v.canto, [['ini', `Do canto ${cI}`], ['fim', `Do canto ${cF}`]])}
       ${opc}
-      ${B ? `<hr class="sep">
-        <div class="field"><span class="fc-label">Parede de ${h(B.codigo)} onde está a porta</span>
-          ${opcoes('paredeB', v.paredeB, [...Array(paredesDoAmb(B).length).keys()].map(k => [k, nomeParede(B, k)]))}</div>
-        ${campoR(`Boneca em ${B.codigo} (m)`, 'bonecaB', v.bonecaB, { numero: true, dica: `A mesma porta, medida por dentro de ${h(B.codigo)} (cantos de ${h(B.codigo)}).` })}
-        ${opcoes('cantoB', v.cantoB, [['ini', `Do canto ${bI}`], ['fim', `Do canto ${bF}`]])}` : ''}
+      ${B ? `<p class="dica">Do outro lado: <b>${h(B.codigo)}</b> (a parede dele encosta nesta).</p>` : ''}
       ${r.id ? `<button class="btn btn-ghost perigo" data-acao="dl-excluir-porta">Excluir ${jan ? 'janela' : 'porta'}</button>` : ''}`;
   }
   // vizinho
@@ -1680,28 +1658,42 @@ function aplicar(L, r) {
   };
   if (r.tipo === 'amb') {
     let a = r.id && ambPorId(L, r.id);
-    if (!a) { a = novoAmbiente(L, r.pav); a.id = r.novoId || (r.novoId = uid()); L.ambientes.push(a); }
+    if (!a) {
+      // novo ambiente solto: à direita do que já existe no pavimento
+      const lay = Planta.layout(L, r.pav), rs = [...lay.pos.values()];
+      const bb = rs.length ? Planta.caixa(rs) : null;
+      a = novoAmbiente(L, r.pav);
+      a.id = r.novoId || (r.novoId = uid());
+      a.pos = bb ? { x: r2(bb.x1 + 1), y: r2(bb.y0) } : { x: 0, y: 0 };
+      L.ambientes.push(a);
+    }
     a.nome = v.nome;
-    medidas(a, r.ancora);
+    medidas(a, null);
+    if (v.forma !== 'poli' && 'rot' in v) a.rot = v.rot;
+    if (r.antes) { r.cantoUsado = manterCanto(L, a, r.antes, v.fixo || 'auto'); manterConteudo(L, a, r.antes); }
     return { ambId: a.id };
   }
   if (r.tipo === 'porta') {
     let p = r.id && L.portas.find(x => x.id === r.id);
-    if (!p) { p = { id: r.novoId, ambA: r.ambA, ambB: null, paredeB: 0, bonecaB: '', cantoB: 'ini' }; L.portas.push(p); }
+    if (!p) { p = { id: r.novoId, ambA: r.ambA }; L.portas.push(p); }
     Object.assign(p, {
       parede: +v.parede, modelo: v.modelo, abre: v.abre, lado: v.lado, largura: v.largura, altura: v.altura,
       peitoril: v.peitoril, boneca: v.boneca, canto: v.canto, espessura: v.espessura,
     });
-    if (p.ambB) { p.bonecaB = v.bonecaB; p.cantoB = v.cantoB; if (v.paredeB != null) p.paredeB = +v.paredeB; }
     return { portaId: p.id, ambId: p.ambA };
   }
   const p = L.portas.find(x => x.id === r.portaId);
   let b = ambPorId(L, r.novoId);
   if (!b) { b = novoAmbiente(L, ambPorId(L, p.ambA).pavimentoId); b.id = r.novoId; L.ambientes.push(b); }
   b.nome = v.nome;
+  // posiciona pela porta uma única vez e depois fica independente (posição própria)
   b.ancora = p.id;
   Object.assign(p, { ambB: b.id, paredeB: 0, bonecaB: v.bonecaB, cantoB: v.cantoB });
   medidas(b, p.id);
+  const R = Planta.layout(L, b.pavimentoId).pos.get(b.id);
+  if (R) { b.pos = { x: R.t[0], y: R.t[1] }; b.rot = String(R.rot / Planta.RAD); }
+  delete b.ancora;
+  for (const k of ['ambB', 'paredeB', 'bonecaB', 'cantoB']) delete p[k];
   return { ambId: b.id, portaId: p.id };
 }
 
@@ -1717,10 +1709,11 @@ function atualizarPrevia() {
   let cantos = ref.ambId;
   if (rasc.tipo === 'porta') {
     cotas.push(Planta.cotaBoneca(lay, p.id, 'A', fmt(num(p.boneca) || 0)), Planta.cotaLargura(lay, p.id, fmt(num(p.largura) || 0)));
-    if (p.ambB) { cotas.push(Planta.cotaBoneca(lay, p.id, 'B', fmt(num(p.bonecaB) || 0))); foco.push(p.ambB); }
+    const g = lay.portas.find(x => x.p.id === p.id);
+    if (g && g.ambB) { cotas.push(Planta.cotaBoneca(lay, p.id, 'B', fmt(g.cB))); foco.push(g.ambB); }
   } else if (rasc.tipo === 'vizinho') {
     foco.push(p.ambA);
-    cotas.push(Planta.cotaBoneca(lay, p.id, 'B', fmt(num(p.bonecaB) || 0)));
+    cotas.push(Planta.cotaBoneca(lay, p.id, 'B', fmt(num(rasc.v.bonecaB) || 0)));
   }
   el.innerHTML = Planta.svg(Lc, rasc.pav, lay, Planta.enquadrar(lay, W, H, foco), { cotas: cotas.filter(Boolean), destaque: [ref.ambId], cantos });
   const av = $('#dl-avisos');
@@ -1741,6 +1734,14 @@ async function salvarDialogo() {
     ls.set('espessura', v.espessura);
   }
   if (r.tipo === 'vizinho' && num(v.bonecaB) == null) return toast('Informe a boneca da porta neste ambiente.');
+  if (r.tipo === 'amb' || r.tipo === 'vizinho') {
+    const Lc = normalizar(clonar(ctx.lev)), rc = { ...r, v: clonar(v) }, refc = aplicar(Lc, rc);
+    const layc = Planta.layout(Lc, r.pav), Rn = layc.pos.get(refc.ambId), outro = Rn && Planta.bateEm(layc, Rn);
+    if (outro) {
+      const o = ambPorId(Lc, outro);
+      return toast(`Assim o ambiente ficaria por cima de ${o ? o.codigo : 'outro'}. ${r.id ? 'Escolha outro canto parado ou mova o ambiente antes.' : 'Ajuste as medidas.'}`, 5000);
+    }
+  }
   const ref = aplicar(ctx.lev, r);
   ctx.sel = ref.ambId;
   ctx.item = r.tipo === 'porta' ? { tipo: 'porta', id: ref.portaId } : null;
@@ -1961,14 +1962,15 @@ function montarAbas(L) {
       { t: 'Liga a', w: 12 }, { t: 'Boneca no outro ambiente (m)', w: 15, fmt: 'dec' }, { t: 'Boneca medida (outro)', w: 20 },
     ],
     linhas: L.portas.map(p => {
-      const A = ambPorId(L, p.ambA), B = p.ambB && ambPorId(L, p.ambB);
+      const A = ambPorId(L, p.ambA);
+      const g = Planta.layout(L, A.pavimentoId).portas.find(x => x.p.id === p.id), B = g && g.ambB && ambPorId(L, g.ambB);
       return [
         nomePav(L, A.pavimentoId), A.codigo, nomeParede(A, +p.parede), nomeModelo(p.modelo),
         r2(num(p.largura)), r2(num(p.altura)), Planta.ehJanela(p.modelo) ? r2(num(p.peitoril)) : null,
         ['giro', 'giro2', 'correr', 'correr2'].includes(p.modelo) ? (p.abre === 'fora' ? (B ? 'Dentro de ' + B.codigo : 'Fora') : 'Dentro de ' + A.codigo) : '',
         p.modelo === 'giro' || p.modelo === 'correr' ? 'Lado do canto ' + cantosDe(A, +p.parede)[p.lado === 'fim' ? 1 : 0] : '',
         r2(num(p.espessura)), r2(num(p.boneca)), 'Do canto ' + cantosDe(A, +p.parede)[p.canto === 'fim' ? 1 : 0],
-        B ? B.codigo : '', B ? r2(num(p.bonecaB)) : null, B ? 'Do canto ' + cantosDe(B, +p.paredeB || 0)[p.cantoB === 'fim' ? 1 : 0] + ' de ' + B.codigo : '',
+        B ? B.codigo : '', B ? r2(g.cB) : null, B ? 'Do canto ' + cantosDe(B, g.WB.k)[0] + ' de ' + B.codigo : '',
       ];
     }),
   };
@@ -2241,17 +2243,6 @@ async function acao(nome, b) {
       break;
     }
     case 'pe-girar': girarObjeto(); break;
-    case 'pe-separar': {
-      const p = ctx.item && L.portas.find(x => x.id === ctx.item.id), B = p && ambPorId(L, p.ambB);
-      if (!B) return;
-      const R = Planta.layout(L, pavAtual(L)).pos.get(B.id);
-      Object.assign(B, { ancora: null, pos: { x: r2(R.t[0]), y: r2(R.t[1]) }, rot: String(Math.round(R.rot / Planta.RAD * 100) / 100) });
-      Object.assign(p, { ambB: null, paredeB: 0, bonecaB: '', cantoB: 'ini' });
-      salvarDepois();
-      selecionar(null, B.id);
-      toast(`${B.codigo} separado. Arraste para encaixar em outra porta.`);
-      break;
-    }
     case 'pe-excluir': await excluirItem(); break;
     case 'pe-mais': if (ctx.item && ctx.item.tipo === 'porta') abrirPorta(ctx.item.id); break;
     case 'pe-vizinho': if (ctx.item && ctx.item.tipo === 'porta') abrirVizinho(ctx.item.id); break;
@@ -2327,8 +2318,6 @@ async function acao(nome, b) {
     case 'dl-excluir-porta': {
       const p = L.portas.find(x => x.id === rasc.id);
       if (!p) return;
-      const B = p.ambB && ambPorId(L, p.ambB);
-      if (B && B.ancora === p.id) { alert(`Esta porta posiciona ${tituloAmb(B)}. Exclua antes esse ambiente.`); return; }
       if (!confirm('Excluir esta porta?')) return;
       L.portas = L.portas.filter(x => x !== p);
       salvarDepois();

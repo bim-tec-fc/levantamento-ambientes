@@ -20,18 +20,20 @@ e as paredes são chamadas pelos cantos (parede A–B).
   Pode marcar os cantos em qualquer sentido. A última parede fecha sozinha; se ela foi medida,
   informe em **Medidas** e a ferramenta avisa se o desenho não fecha.
 
-**Ligação pelas portas.** O primeiro ambiente fica onde foi desenhado; os outros entram pelas portas:
+**Montagem da planta (ímã).** Cada ambiente tem posição própria. Desenhe os ambientes e encoste
+um no outro: toque num ambiente e arraste. Perto de outro ambiente ele gira e encosta parede com
+parede, deixando entre elas a espessura de parede definida em **Dados** (padrão 0,15 m); também
+encosta numa segunda parede (para entrar num canto) ou alinha as quinas. Soltar por cima de outro
+ambiente não é aceito: ele volta para onde estava.
 
-1. Toque numa parede: aparece o comprimento daquele trecho (editável) e as opções **Porta**,
-   **Janela**, **Ponto** e **Objeto**, inseridos no lugar tocado.
-2. Toque no **+** do lado de fora da porta e informe o ambiente do outro lado: a parede da porta
-   (A–B dele), a profundidade (se for retângulo) e a **boneca** da mesma porta medida por dentro dele.
-   Se ele não for retangular, use **Desenhar parede a parede**: a primeira parede já é a da porta.
-3. O ambiente novo é posicionado e alinhado sozinho, inclusive em paredes inclinadas.
-4. **Ambiente já desenhado (solto):** selecione e arraste. Perto de uma porta livre (+) ele gira e
-   encaixa sozinho na parede mais adequada; se ficar por cima de outro ambiente, desliza ao longo da
-   parede até o lugar livre mais perto. A porta passa a pertencer aos dois e a boneca do outro lado
-   fica editável em **Mais opções**. Para soltar de novo, use **Separar** na porta.
+**Portas.** Toque numa parede: aparece o comprimento daquele trecho (editável) e as opções **Porta**,
+**Janela**, **Ponto** e **Objeto**, inseridos no lugar tocado. Se na parede encosta outro ambiente, a
+porta passa a ligar os dois e fura as duas paredes automaticamente. Na porta sem ninguém do outro
+lado há o botão **Novo ambiente do outro lado**, que cria o vizinho já encostado.
+
+**Mudar medidas.** Em **Medidas**, escolha qual canto fica parado (ou deixe no automático, que usa o
+primeiro canto que não cause sobreposição). Portas, pontos e objetos ficam no mesmo lugar da planta.
+Uma medida que deixaria o ambiente por cima de outro não é salva.
 
 **Portas e janelas:** giro, giro duplo, correr, correr duplo e vão livre, com lado de abertura e
 dobradiça (ou sentido de correr); janela baixa e janela alta, com largura, altura e peitoril.

@@ -256,17 +256,24 @@
       const w = num(p.largura) || 0, t = num(p.espessura) ?? ESPESSURA_PADRAO;
       const c = canon(W.len, num(p.boneca) || 0, w, p.canto);
       const P1 = ptW(W, c), P2 = ptW(W, c + w);
-      const ligada = !!(p.ambB && ligadaPor.get(p.ambB) === p.id);
-      let foraB = false, cB = null, WB = null;
-      if (ligada) {
-        WB = pos.get(p.ambB).walls[+p.paredeB || 0];
-        cB = canon(WB.len, num(p.bonecaB) || 0, w, p.cantoB);
-        foraB = cB < -0.005 || cB + w > WB.len + 0.005;
+      // o ambiente do outro lado é o que tem uma parede encostada nesta (paralela, a até 60 cm)
+      let viz = null;
+      for (const [id2, R2] of pos) {
+        if (id2 === p.ambA || !R2.fechado) continue;
+        for (const W2 of R2.walls) {
+          if (dot(W2.nOut, W.nOut) > -0.995) continue;   // paredes de frente uma para a outra
+          const g1 = dot(sub(P1, W2.a), W2.nOut), g2 = dot(sub(P2, W2.a), W2.nOut), gap = (g1 + g2) / 2;
+          if (gap < 0.005 || gap > 0.6 || Math.abs(g1 - g2) > 0.03) continue;
+          const sB = Math.min(dot(sub(P1, W2.a), W2.d), dot(sub(P2, W2.a), W2.d));   // batente mais perto do início da parede de B
+          if (sB < -0.05 || sB + w > W2.len + 0.05) continue;
+          if (!viz || gap < viz.gap) viz = { id: id2, W: W2, gap, cB: sB };
+        }
       }
       const g = {
-        p, W, x1: P1[0], y1: P1[1], x2: P2[0], y2: P2[1], nx: W.nOut[0], ny: W.nOut[1], t, w, c, len: W.len,
-        ligada, WB, cB, janela: ehJanela(p.modelo), corta: p.modelo !== 'janela_alta',
-        fora: c < -0.005 || c + w > W.len + 0.005, foraB,
+        p, W, x1: P1[0], y1: P1[1], x2: P2[0], y2: P2[1], nx: W.nOut[0], ny: W.nOut[1], t: viz ? viz.gap : t, w, c, len: W.len,
+        ligada: !!viz, ambB: viz ? viz.id : null, WB: viz ? viz.W : null, cB: viz ? viz.cB : null,
+        janela: ehJanela(p.modelo), corta: p.modelo !== 'janela_alta',
+        fora: c < -0.005 || c + w > W.len + 0.005, foraB: !!viz && (viz.cB < -0.005 || viz.cB + w > viz.W.len + 0.005),
       };
       g.prims = primitivasAbertura(g);
       return g;
@@ -385,7 +392,7 @@
     for (const g of lay.portas) {
       if (!todas && !g.corta) continue;
       if (g.p.ambA === amb && +g.p.parede === k) out.push({ g, ua: g.c, ub: g.c + g.w, lado: 'A' });
-      else if (g.ligada && g.p.ambB === amb && (+g.p.paredeB || 0) === k) out.push({ g, ua: g.cB, ub: g.cB + g.w, lado: 'B' });
+      else if (g.ligada && g.ambB === amb && g.WB.k === k) out.push({ g, ua: g.cB, ub: g.cB + g.w, lado: 'B' });
     }
     return out.sort((a, b) => a.ua - b.ua);
   }
@@ -457,7 +464,7 @@
     for (const g of lay.portas) {
       const oq = g.janela ? 'A janela' : 'A porta';
       if (g.fora) av.push(`${oq} de ${cod(g.p.ambA)} não cabe na parede (${fmt(g.len)} m). Confira a boneca e a largura.`);
-      if (g.foraB) av.push(`A porta entre ${cod(g.p.ambA)} e ${cod(g.p.ambB)} não cabe na parede de ${cod(g.p.ambB)}. Confira a boneca medida lá.`);
+      if (g.foraB) av.push(`A porta entre ${cod(g.p.ambA)} e ${cod(g.ambB)} não cabe na parede de ${cod(g.ambB)}. Confira a posição dos ambientes.`);
     }
     for (const pt of lay.pontos) if (pt.s < -0.005 || pt.s > pt.len + 0.005) av.push(`Um ponto (${pt.cod}) de ${cod(pt.amb)} está fora da parede.`);
     for (const o of lay.objetos) {
@@ -584,7 +591,7 @@
     // fundos
     for (const [id, R] of lay.pos) {
       if (R.verts.length < 2) continue;
-      const cls = ['pl-fundo', o.sel === id && !it ? 'sel' : '', (o.destaque && o.destaque.includes(id)) || o.desenho === id ? 'dest' : ''].join(' ');
+      const cls = ['pl-fundo', o.sel === id && !it ? 'sel' : '', (o.destaque && o.destaque.includes(id)) || o.desenho === id ? 'dest' : '', o.invalido === id ? 'invalido' : ''].join(' ');
       out += `<polygon class="${cls}" data-amb="${esc(id)}" points="${R.verts.map(P).join(' ')}"/>`;
       if (!R.fechado && R.verts.length > 2) out += ln(R.verts[R.verts.length - 1], R.verts[0], 'pl-fechar');
     }
@@ -678,7 +685,7 @@
     // "+" nas portas sem ambiente do outro lado
     if (o.mais) {
       for (const g of lay.portas) {
-        if (g.p.ambB || g.janela) continue;
+        if (g.ambB || g.janela) continue;
         const d = g.t + 0.55;
         const cx = X((g.x1 + g.x2) / 2 + g.nx * d), cy = Y((g.y1 + g.y2) / 2 + g.ny * d);
         out += `<g class="pl-mais" data-mais="${esc(g.p.id)}"><circle cx="${cx}" cy="${cy}" r="17"/><path d="M${cx - 7} ${cy}H${cx + 7}M${cx} ${cy - 7}V${cy + 7}"/></g>`;
@@ -696,7 +703,7 @@
       return g.p.canto === 'fim' ? { a: ptW(g.W, g.c + g.w, 0.3), b: ptW(g.W, g.W.len, 0.3), txt } : { a: ptW(g.W, 0, 0.3), b: ptW(g.W, g.c, 0.3), txt };
     }
     if (!g.ligada) return null;
-    return g.p.cantoB === 'fim' ? { a: ptW(g.WB, g.cB + g.w, 0.3), b: ptW(g.WB, g.WB.len, 0.3), txt } : { a: ptW(g.WB, 0, 0.3), b: ptW(g.WB, g.cB, 0.3), txt };
+    return { a: ptW(g.WB, 0, 0.3), b: ptW(g.WB, g.cB, 0.3), txt };
   }
   /** Cota da largura da porta, por dentro do ambiente A, em linha com a cota da boneca. */
   function cotaLargura(lay, portaId, txt) {
@@ -793,6 +800,107 @@
     ].join('\n') + '\n';
   }
 
+  // ───────────────────────── Posição própria e ímã ─────────────────────────
+  /**
+   * Desde a v1.2 cada ambiente guarda a própria posição (pos, rot). Ambientes que ainda dependiam de
+   * uma porta (ancora) ou sem posição recebem a posição em que estão desenhados agora, e as portas
+   * deixam de guardar o outro lado (ele é reconhecido pela parede encostada).
+   * Ambientes em desenho a partir de uma porta ficam como estão até fechar.
+   */
+  function fixarPosicoes(L) {
+    let mudou = false;
+    for (const pav of L.pavimentos || []) {
+      const lay = layout(L, pav.id);
+      for (const a of L.ambientes) {
+        if (a.pavimentoId !== pav.id || a.desenhando) continue;
+        const R = lay.pos.get(a.id);
+        if (!R) continue;
+        if (a.ancora || !a.pos || num(a.pos.x) == null) {
+          a.pos = { x: Math.round(R.t[0] * 1000) / 1000, y: Math.round(R.t[1] * 1000) / 1000 };
+          a.rot = String(Math.round(R.rot / RAD * 100) / 100);
+          mudou = true;
+        }
+      }
+    }
+    const desenhando = new Set((L.ambientes || []).filter(a => a.desenhando).map(a => a.ancora));
+    for (const a of L.ambientes || []) if (!a.desenhando && a.ancora) { delete a.ancora; mudou = true; }
+    for (const p of L.portas || []) {
+      if (desenhando.has(p.id)) continue;
+      for (const k of ['ambB', 'paredeB', 'bonecaB', 'cantoB']) if (k in p) { delete p[k]; mudou = true; }
+    }
+    return mudou;
+  }
+
+  /**
+   * Ímã: recebe a posição pretendida (r em radianos, t) do ambiente a e devolve a posição encaixada.
+   * 1) a parede dele mais próxima de uma parede de outro ambiente (quase paralela, de frente) gira
+   *    para ficar exatamente paralela e encosta, deixando a espessura de parede entre as duas;
+   * 2) ao longo dessa parede, encosta numa segunda parede (para entrar num canto) ou alinha as quinas.
+   * lim: até que distância (m) o ímã puxa. Devolve { r, t, encostou }.
+   */
+  function imantar(lay, a, r, t, esp, lim) {
+    const outras = [...lay.pos.values()].filter(o => o.id !== a.id && o.fechado).flatMap(o => o.walls);
+    const frente = (W, W2) => {
+      const ang = Math.acos(Math.max(-1, Math.min(1, -dot(W.nOut, W2.nOut))));   // 0 = de frente
+      const meio = mul(add(W.a, W.b), 0.5);
+      const dist = dot(sub(meio, W2.a), W2.nOut);
+      const s0 = dot(sub(W.a, W2.a), W2.d), s1 = dot(sub(W.b, W2.a), W2.d);
+      const sobre = Math.min(Math.max(s0, s1), W2.len) - Math.max(Math.min(s0, s1), 0);
+      return { ang, dist, sobre };
+    };
+    let R = colocar(a, r, t);
+    let melhor = null;
+    for (const W of R.walls) for (const W2 of outras) {
+      const e = frente(W, W2);
+      if (e.ang > 15 * RAD || Math.abs(e.dist - esp) > lim || e.sobre < 0.05) continue;
+      const nota = Math.abs(e.dist - esp) + e.ang * 1.5;
+      if (!melhor || nota < melhor.nota) melhor = { k: W.k, W2, nota };
+    }
+    if (!melhor) return { r, t, encostou: false };
+    const { k, W2 } = melhor;
+    // gira em torno do meio da parede, até ficar de frente para a outra
+    const W = R.walls[k], meio = mul(add(W.a, W.b), 0.5), meioLocal = rotv(sub(meio, t), -r);
+    r += Math.atan2(-W2.nOut[1], -W2.nOut[0]) - Math.atan2(W.nOut[1], W.nOut[0]);
+    t = sub(meio, rotv(meioLocal, r));
+    R = colocar(a, r, t);
+    t = add(t, mul(W2.nOut, esp - dot(sub(R.walls[k].a, W2.a), W2.nOut)));
+    R = colocar(a, r, t);
+    // ao longo da parede encostada: segunda parede de frente ou quinas alinhadas
+    const eixo = W2.d;
+    let desl = null;
+    for (const V of R.walls) {
+      if (V.k === k || Math.abs(dot(V.d, eixo)) > 0.2) continue;
+      for (const V2 of outras) {
+        if (V2 === W2) continue;
+        const e = frente(V, V2), kk = dot(eixo, V2.nOut);
+        if (e.ang > 3 * RAD || Math.abs(kk) < 0.5) continue;
+        const d = (esp - e.dist) / kk;
+        if (Math.abs(d) > lim) continue;
+        // depois de andar d, as duas precisam ficar uma de frente para a outra
+        const s0 = dot(sub(add(V.a, mul(eixo, d)), V2.a), V2.d), s1 = dot(sub(add(V.b, mul(eixo, d)), V2.a), V2.d);
+        if (Math.min(Math.max(s0, s1), V2.len) - Math.max(Math.min(s0, s1), 0) < 0.05) continue;
+        if (desl == null || Math.abs(d) < Math.abs(desl)) desl = d;
+      }
+    }
+    if (desl == null) {
+      const Wk = R.walls[k];
+      for (const sv of [dot(sub(Wk.a, W2.a), eixo), dot(sub(Wk.b, W2.a), eixo)]) {
+        for (const alvo of [0, W2.len]) {
+          const d = alvo - sv;
+          if (Math.abs(d) <= lim && (desl == null || Math.abs(d) < Math.abs(desl))) desl = d;
+        }
+      }
+    }
+    if (desl != null) t = add(t, mul(eixo, desl));
+    return { r: Math.atan2(Math.sin(r), Math.cos(r)), t, encostou: true };
+  }
+
+  /** O ambiente (na posição R) fica por cima de algum outro do pavimento? Devolve o id do primeiro. */
+  function bateEm(lay, R) {
+    for (const [id, o] of lay.pos) if (id !== R.id && sobrepoe(R, o)) return id;
+    return null;
+  }
+
   // ───────────────────────── Conversão de dados antigos ─────────────────────────
   /**
    * Até a v1.2 as paredes eram 'baixo', 'dir', 'cima', 'esq' e as distâncias eram medidas a partir
@@ -843,7 +951,7 @@
 
   raiz.Planta = {
     layout, linhas, conferir, enquadrar, svg, cotaBoneca, cotaLargura, infoItem, segmentoEm, vaosDaParede, dxf, caixa, iconeObjeto,
-    formaLocal, areaPerimetro, converterAntigo, letra, ptW, paredesDe, sobrepoe,
+    formaLocal, areaPerimetro, converterAntigo, letra, ptW, paredesDe, sobrepoe, colocar, fixarPosicoes, imantar, bateEm,
     ESPESSURA_PADRAO, PD_PADRAO, MODELOS, PADRAO_ABERTURA, PONTOS, BIBLIOTECA, ehJanela, canon, fmtNivel, nivelDe, pdDe, RAD,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
