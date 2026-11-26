@@ -8,7 +8,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 'use strict';
 
-const VERSAO = '1.2.1';
+const VERSAO = '1.3.0';
 const FORMATO_BACKUP = 'fc-levantamento-ambientes';
 
 // ───────────────────────── Listas padrão ─────────────────────────
@@ -170,7 +170,7 @@ function normalizar(L) {
     a.inst = Array.isArray(a.inst) ? a.inst : [];
     for (const i of a.inst) i.fotos = Array.isArray(i.fotos) ? i.fotos : [];
     for (const k of ['codigo', 'nome', 'uso', 'comp', 'larg', 'lados', 'peDireito', 'piso', 'parede', 'forro', 'conservacao', 'obs']) a[k] = a[k] ?? '';
-    a.forma = ['irr', 'poli'].includes(a.forma) ? a.forma : 'ret';
+    a.forma = ['irr', 'poli', 'marcador'].includes(a.forma) ? a.forma : 'ret';
     if (a.forma === 'poli') a.paredes = Array.isArray(a.paredes) ? a.paredes : [];
     if (!L.pavimentos.some(p => p.id === a.pavimentoId)) a.pavimentoId = L.pavimentos[0].id;
   }
@@ -478,11 +478,11 @@ function htmlAmbientes(L) {
         <div class="item-t">${h(a.nome || '(sem nome)')}</div>
         <div class="item-s">${h(a.uso || 'Uso não informado')}${L.pavimentos.length > 1 ? ' · ' + h(nomePav(L, a.pavimentoId)) : ''}</div>
       </div>
-      <div class="item-d"><div class="num item-area">${c.area != null ? fmt(c.area) + ' m²' : '–'}</div>
+      <div class="item-d"><span class="st-tag st-${a.status || 'levantar'}">${h(nomeStatus(a.status))}</span><div class="num item-area">${c.area != null ? fmt(c.area) + ' m²' : a.forma === 'marcador' ? 'marcador' : '–'}</div>
         <span class="farol ${classeFarol(pct)}">${pct}%</span></div>
     </a>`;
   }).join('') : `<div class="card vazio">Nenhum ambiente${f ? ' neste pavimento' : ''} ainda.<br>Os ambientes são desenhados na aba <b>Planta</b>.</div>`;
-  return kpis + chips + lista;
+  return kpis + htmlResumoStatus(L, f) + chips + lista;
 }
 
 function htmlDados(L) {
@@ -568,7 +568,9 @@ function telaAmbiente() {
   const idPav = fid();
 
   const ligado = estaLigado(L, a);
-  const medidas = a.forma === 'poli'
+  const medidas = a.forma === 'marcador'
+    ? '<p class="dica">Marcador: ainda sem medidas. Em <b>Ver na planta</b>, use <b>Desenhar</b> ou <b>Retângulo</b> para medir este ambiente.</p>'
+    : a.forma === 'poli'
     ? `<p class="dica">Forma livre, ${(a.paredes || []).length + 1} paredes: ${(a.paredes || []).map((p, k) => `${Planta.letra(k)}–${Planta.letra(k + 1)} ${fmt(num(p.c))} m${k ? ` (${h(p.ang)}°)` : ''}`).join(' · ')}. Para mudar, use <b>Ver na planta</b> e <b>Medidas</b>.</p>`
     : a.forma === 'ret'
     ? `<div class="grid2">${campoNum('Comprimento (parede A–B)', 'a.comp', a.comp)}${campoNum('Largura (parede B–C)', 'a.larg', a.larg)}</div>`
@@ -614,6 +616,7 @@ function telaAmbiente() {
           <select id="${idPav}" class="input" data-mudapav${ligado ? ' disabled title="Ambiente ligado por porta a outro"' : ''}>${pavOpts}</select></div>
       </div>
       ${campo('Nome do ambiente', 'a.nome', a.nome, { extra: 'placeholder="Ex.: Depósito de cerâmica" enterkeyhint="next" autocapitalize="sentences"' })}
+      <div class="field"><span class="fc-label">Status</span>${chipsStatus(a.status)}</div>
       ${campoLista('Uso', 'a.uso', USOS, a.uso)}
     </section>
 
@@ -768,6 +771,7 @@ function htmlPlanta(L) {
       <button class="btn btn-ghost icone" data-acao="pl-zoom" data-v="0.77" aria-label="Afastar">−</button>
       <button class="btn btn-ghost icone" data-acao="pl-enquadrar" aria-label="Enquadrar a planta">${ICONE_ENQUADRAR}</button>
       <button class="btn btn-ghost icone pl-3d" data-acao="pl-3d" aria-label="Ver em 3D">3D</button>
+      <button class="btn btn-ghost icone" data-acao="fd-carregar" aria-label="Planta de fundo"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 5h18v14H3zM3 15l5-5 4 4 3-3 6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
     </div>
   </main>
   <div id="pl-painel" class="pl-painel"></div>`;
@@ -791,9 +795,11 @@ function tamanhoSvg(el) {
   return [W, H];
 }
 function opcoesPlanta() {
-  const d = ctx.desenho, a = d && ambPorId(ctx.lev, d.amb), arr = ctx.arrasto;
-  if (arr) return { sel: arr.amb, item: null, mais: false, toque: false, destaque: [arr.amb], invalido: arr.invalido ? arr.amb : null };
-  return { sel: ctx.sel, item: ctx.item, mais: false, toque: !d, desenho: a && (a.pos || a.ancora) ? a.id : null };
+  const L = ctx.lev, pav = pavAtual(L), d = ctx.desenho, a = d && ambPorId(L, d.amb), arr = ctx.arrasto;
+  const fundo = opcaoFundo(L, pav), calib = ctx.calibrar ? ctx.calibrar.pontos : null;
+  if (arr) return { sel: arr.amb, item: null, mais: false, toque: false, destaque: [arr.amb], invalido: arr.invalido ? arr.amb : null, fundo };
+  const livre = !d && !ctx.calibrar && !ctx.marcando && !ctx.moverFundo;
+  return { sel: ctx.sel, item: ctx.item, mais: false, toque: livre, desenho: a && (a.pos || a.ancora) ? a.id : null, fundo, calib };
 }
 
 function desenharPlanta() {
@@ -801,12 +807,13 @@ function desenharPlanta() {
   if (!L || !el) return;
   const pav = pavAtual(L);
   const lay = Planta.layout(L, pav);
-  if (ctx.sel && !lay.pos.has(ctx.sel)) { ctx.sel = null; ctx.item = null; }
+  if (ctx.sel && !lay.pos.has(ctx.sel) && !lay.marcadores.some(m => m.id === ctx.sel)) { ctx.sel = null; ctx.item = null; }
   if (ctx.item && !Planta.infoItem(lay, ctx.item)) ctx.item = null;
   const [W, H] = tamanhoSvg(el);
   el.classList.toggle('desenhando', !!ctx.desenho);
-  const temDesenho = [...lay.pos.values()].some(R => R.verts.length > 1);
-  if (!temDesenho && !ctx.desenho) { delete ctx.views[pav]; el.innerHTML = ''; painelPlanta(lay); return; }
+  const cxFundo = caixaFundo(L, pav);
+  const temDesenho = [...lay.pos.values()].some(R => R.verts.length > 1) || lay.marcadores.length > 0 || !!cxFundo;
+  if (!temDesenho && !ctx.desenho && !ctx.marcando) { delete ctx.views[pav]; el.innerHTML = ''; painelPlanta(lay); return; }
   if (!temDesenho && !ctx.views[pav]) ctx.views[pav] = { s: 40, ox: W / 2, oy: H / 2 };
   const v0 = ctx.views[pav];
   // reenquadra quando pedido ou quando o ambiente recém-salvo (ou o "+" das portas dele) ficaria fora da tela
@@ -814,7 +821,7 @@ function desenharPlanta() {
   ctx.verSel = false;
   const fora = v0 && R0 && (v0.ox + (R0.bbox.x0 - 0.8) * v0.s < 0 || v0.ox + (R0.bbox.x1 + 0.8) * v0.s > W ||
     v0.oy - (R0.bbox.y1 + 0.8) * v0.s < 0 || v0.oy - (R0.bbox.y0 - 0.8) * v0.s > H);
-  if ((!v0 || ctx.focar || fora) && temDesenho) { ctx.views[pav] = Planta.enquadrar(lay, W, H); ctx.focar = null; }
+  if ((!v0 || ctx.focar || fora) && temDesenho) { ctx.views[pav] = Planta.enquadrar(lay, W, H, null, cxFundo ? [cxFundo] : []); ctx.focar = null; }
   if (ctx.verItem) {
     // centraliza o item recém-selecionado se ele ficou fora da área visível (o painel ocupa parte da tela)
     ctx.verItem = false;
@@ -850,10 +857,16 @@ function painelPlanta(lay) {
   const L = ctx.lev, pav = pavAtual(L), p = $('#pl-painel');
   if (!p) return;
   if (ctx.desenho) { p.innerHTML = painelDesenho(); return; }
-  if (!lay.pos.size) {
+  if (ctx.marcando) { p.innerHTML = painelMarcando(); return; }
+  if (ctx.painelFundo || ctx.calibrar) { const html = painelFundo(); if (html) { p.innerHTML = html; return; } }
+  if (!lay.pos.size && !lay.marcadores.length) {
     p.innerHTML = `<div class="pl-vazio">
-      <p>Comece pelo ambiente onde você está. Se ele for retangular, informe comprimento e largura. Se não for, desenhe: toque em cada canto e ajuste a medida e o ângulo de cada parede.</p>
-      ${botoesNovo(true)}</div>`;
+      <p>Se você tem a planta (imagem), carregue-a como fundo e trabalhe por cima dela. Depois, ou sem planta: desenhe os ambientes (retângulo ou parede a parede) ou marque cada ambiente com um toque para abrir a ficha dele.</p>
+      ${botoesNovo(true)}
+      <div class="pl-acoes g2">
+        <button class="btn btn-ghost" data-acao="fd-carregar">${fundoDoPav(L, pav) ? 'Planta de fundo' : '+ Planta de fundo (imagem)'}</button>
+        <button class="btn btn-ghost" data-acao="mc-novo">+ Marcador</button>
+      </div></div>`;
     return;
   }
   const avisos = Planta.conferir(L, pav, lay).map(x => `<div class="alerta">${h(x)}</div>`).join('');
@@ -864,10 +877,16 @@ function painelPlanta(lay) {
     ctx.item = null;
   }
   const a = ctx.sel && ambPorId(L, ctx.sel);
+  if (a && a.forma === 'marcador') { p.innerHTML = avisos + painelMarcador(a); return; }
   if (!a) {
     p.innerHTML = `${avisos}
+      ${htmlResumoStatus(L, pav)}
       <p class="dica">Desenhe os ambientes e encoste um no outro: toque num ambiente e arraste; perto de outro ele gira e encosta (ímã), deixando a espessura da parede. Depois toque numa parede para inserir porta, janela ou ponto: se ali encostar outro ambiente, a porta liga os dois.</p>
-      ${botoesNovo(false)}`;
+      ${botoesNovo(false)}
+      <div class="pl-acoes g2">
+        <button class="btn btn-ghost" data-acao="fd-carregar">${fundoDoPav(L, pav) ? 'Planta de fundo' : '+ Planta de fundo (imagem)'}</button>
+        <button class="btn btn-ghost" data-acao="mc-novo">+ Marcador</button>
+      </div>`;
     return;
   }
   const c = calc(a), R = lay.pos.get(a.id);
@@ -879,6 +898,7 @@ function painelPlanta(lay) {
       <div class="pl-sel-s num">${formaTxt} · ${fmt(c.area)} m²${num(a.nivel) ? ' · NV ' + Planta.fmtNivel(num(a.nivel)) : ''}</div>
       <div class="pl-sel-s">Arraste para mover: perto de outro ambiente ele encosta sozinho. Não deixa ficar por cima.</div>
     </div>
+    ${chipsStatus(a.status)}
     <div class="pl-acoes g4">
       <button class="btn btn-primary" data-acao="pl-nova-porta">+ Porta</button>
       <button class="btn btn-ghost" data-acao="pl-novo-obj">+ Objeto</button>
@@ -1293,10 +1313,204 @@ function fecharDesenho() {
 }
 
 async function cancelarDesenho() {
-  const L = ctx.lev, a = ambPorId(L, ctx.desenho.amb);
+  const L = ctx.lev, a = ambPorId(L, ctx.desenho.amb), volta = ctx.desenho.deMarcador;
   ctx.desenho = null;
+  if (a && volta) {
+    // era um marcador: volta a ser marcador, com a ficha intacta
+    Object.assign(a, { forma: 'marcador', pos: volta.pos, paredes: [] });
+    delete a.desenhando;
+    salvarDepois();
+    return desenharPlanta();
+  }
   if (a) await excluirAmbiente(L, a, false);
   desenharPlanta();
+}
+
+// ── Status, planta de fundo e marcadores ──
+const STATUS = Planta.STATUS;
+const nomeStatus = s => (STATUS.find(x => x[0] === (s || '')) || STATUS[0])[1];
+const chipsStatus = (atual, acao = 'st', extra = '') => `<div class="seg st-chips">${STATUS.map(([v, t]) =>
+  `<button class="chip st-chip st-${v || 'levantar'}${(atual || '') === v ? ' on' : ' off'}" data-acao="${acao}" data-v="${v}"${extra}>${h(t)}</button>`).join('')}</div>`;
+
+/** Resumo do levantamento por status (quantos ambientes e marcadores em cada um). */
+function resumoStatus(L, pav) {
+  const lista = L.ambientes.filter(a => !pav || a.pavimentoId === pav);
+  return STATUS.map(([v, t]) => [v, t, lista.filter(a => (a.status || '') === v).length]).filter(x => x[2] > 0);
+}
+const htmlResumoStatus = (L, pav) => {
+  const r = resumoStatus(L, pav);
+  return r.length ? `<div class="st-resumo">${r.map(([v, t, n]) => `<span class="st-tag st-${v || 'levantar'}"><b class="num">${n}</b> ${h(t)}</span>`).join('')}</div>` : '';
+};
+
+// planta de fundo: imagem guardada junto das fotos, com posição e escala no pavimento
+const urlsFundo = new Map();   // fotoId → URL temporária da imagem (evita repetir a imagem inteira a cada desenho)
+function fundoDoPav(L, pav) {
+  const p = L.pavimentos.find(x => x.id === pav);
+  return p && p.fundo && p.fundo.fotoId ? p.fundo : null;
+}
+function opcaoFundo(L, pav) {
+  const f = fundoDoPav(L, pav);
+  if (!f) return null;
+  const url = urlsFundo.get(f.fotoId);
+  if (!url) {
+    if (!urlsFundo.has(f.fotoId)) {
+      urlsFundo.set(f.fotoId, '');
+      db.fotoGet(f.fotoId).then(ft => {
+        if (!ft) return;
+        fetch(ft.dataUrl).then(r => r.blob()).then(b => { urlsFundo.set(f.fotoId, URL.createObjectURL(b)); desenharPlanta(); });
+      });
+    }
+    return null;
+  }
+  return { url, x: f.x, y: f.y, w: f.wpx * f.escala, h: f.hpx * f.escala, rot: num(f.rot) || 0, opac: f.opac ?? 0.5 };
+}
+/** Cantos da imagem de fundo na planta (para enquadrar). */
+function caixaFundo(L, pav) {
+  const f = fundoDoPav(L, pav);
+  if (!f) return null;
+  const r = (num(f.rot) || 0) * Planta.RAD, w = f.wpx * f.escala, hh = f.hpx * f.escala;
+  const pts = [[0, 0], [w, 0], [w, hh], [0, hh]].map(([x, y]) => [f.x + x * Math.cos(r) - y * Math.sin(r), f.y + x * Math.sin(r) + y * Math.cos(r)]);
+  return [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1])), Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))];
+}
+
+async function receberFundo(file) {
+  const L = ctx.lev, pav = pavAtual(L), pv = L.pavimentos.find(p => p.id === pav);
+  if (!file) return;
+  if (/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)) return toast('Por enquanto a planta precisa ser imagem (JPG ou PNG). Exporte a página do PDF como imagem ou tire um print.', 6000);
+  toast('Carregando a planta…', 20000);
+  try {
+    const img = await carregarImg(file);
+    const dataUrl = reduzir(img, 2600, 0.82);
+    const k = Math.min(1, 2600 / Math.max(img.naturalWidth, img.naturalHeight));
+    const wpx = Math.round(img.naturalWidth * k), hpx = Math.round(img.naturalHeight * k);
+    if (pv.fundo && pv.fundo.fotoId) await apagarFotos([pv.fundo.fotoId]);
+    const foto = { id: uid(), levId: L.id, criadoEm: Date.now(), nomeOriginal: file.name || '', dataUrl, thumb: '', tipo: 'fundo' };
+    await db.fotoPut(foto);
+    // escala provisória: a imagem ocupa a largura visível; depois se calibra com uma medida conhecida
+    const el = $('#planta'), v = ctx.views[pav] || { s: 40, ox: el.clientWidth / 2, oy: el.clientHeight / 2 };
+    const larguraM = el.clientWidth / v.s * 0.9, escala = larguraM / wpx;
+    const cx = (el.clientWidth / 2 - v.ox) / v.s, cy = (v.oy - el.clientHeight / 2) / v.s;
+    pv.fundo = { fotoId: foto.id, wpx, hpx, escala, x: cx - wpx * escala / 2, y: cy - hpx * escala / 2, rot: '0', opac: 0.5 };
+    ctx.views[pav] = ctx.views[pav] || v;
+    salvarDepois();
+    ctx.painelFundo = true;
+    ctx.calibrar = { pontos: [] };
+    desenharPlanta();
+    toast('Planta carregada. Agora calibre a escala: toque nas duas pontas de uma medida conhecida.', 6000);
+  } catch (e) { toast(e.message, 5000); }
+}
+
+function painelFundo() {
+  const L = ctx.lev, pav = pavAtual(L), f = fundoDoPav(L, pav);
+  if (!f) { ctx.painelFundo = false; return ''; }
+  const c = ctx.calibrar;
+  if (c) {
+    if (c.pontos.length < 2) {
+      return `<div class="pl-sel"><div class="pl-sel-t">Calibrar a escala da planta</div>
+        <div class="pl-sel-s">Toque na planta no ${c.pontos.length ? '<b>2º ponto</b>' : '<b>1º ponto</b>'} de uma medida conhecida (de preferência longa: uma parede cotada, um eixo).</div></div>
+        <div class="pl-acoes g2"><span></span><button class="btn btn-ghost" data-acao="fd-cal-cancelar">Cancelar</button></div>`;
+    }
+    const atual = Math.hypot(c.pontos[1][0] - c.pontos[0][0], c.pontos[1][1] - c.pontos[0][1]);
+    return `<div class="pl-sel"><div class="pl-sel-t">Calibrar a escala da planta</div>
+        <div class="pl-sel-s">Na escala atual essa distância mede ${fmt(atual)} m. Informe a medida real.</div></div>
+      ${campoPe('Distância real entre os dois pontos (m)', 'dist', '', { attr: 'data-fd' })}
+      <div class="pl-acoes g2"><button class="btn btn-primary" data-acao="fd-cal-aplicar">Aplicar</button><button class="btn btn-ghost" data-acao="fd-cal-cancelar">Cancelar</button></div>`;
+  }
+  const idOp = fid();
+  return `<div class="pl-sel"><div class="pl-sel-t">Planta de fundo</div>
+      <div class="pl-sel-s">Largura da imagem na escala atual: ${fmt(f.wpx * f.escala)} m. Calibre com uma medida conhecida antes de desenhar por cima.</div></div>
+    <div class="grid2">
+      <div class="field"><label for="${idOp}">Transparência</label><input id="${idOp}" type="range" min="0.1" max="1" step="0.05" value="${f.opac ?? 0.5}" data-fd="opac"></div>
+      ${campoPe('Rotação (graus)', 'rot', f.rot, { attr: 'data-fd' })}
+    </div>
+    <div class="pl-acoes g3">
+      <button class="btn btn-primary" data-acao="fd-calibrar">Calibrar escala</button>
+      <button class="btn btn-ghost${ctx.moverFundo ? ' ativo' : ''}" data-acao="fd-mover">${ctx.moverFundo ? 'Mover: ligado' : 'Mover a planta'}</button>
+      <button class="btn btn-ghost" data-acao="fd-trocar">Trocar imagem</button>
+    </div>
+    <div class="pl-acoes g2">
+      <button class="btn btn-ghost perigo" data-acao="fd-remover">Remover planta</button>
+      <button class="btn btn-ghost" data-acao="fd-fechar">Fechar</button>
+    </div>`;
+}
+
+function aplicarFundo(k, val) {
+  const L = ctx.lev, f = fundoDoPav(L, pavAtual(L));
+  if (!f) return;
+  if (k === 'opac') f.opac = +val;
+  else if (k === 'rot') f.rot = val;
+  salvarDepois();
+}
+
+function aplicarCalibracao() {
+  const L = ctx.lev, f = fundoDoPav(L, pavAtual(L)), c = ctx.calibrar, inp = $('#pl-painel [data-fd="dist"]');
+  const real = num(inp && inp.value);
+  if (!f || !c || c.pontos.length < 2) return;
+  if (!(real > 0)) return toast('Informe a distância real em metros.');
+  const [P1, P2] = c.pontos, atual = Math.hypot(P2[0] - P1[0], P2[1] - P1[1]);
+  if (atual < 1e-6) return;
+  const k = real / atual;
+  // amplia em torno do 1º ponto: ele continua no mesmo lugar
+  f.escala *= k;
+  f.x = P1[0] + (f.x - P1[0]) * k;
+  f.y = P1[1] + (f.y - P1[1]) * k;
+  ctx.calibrar = null;
+  ctx.focar = true;
+  salvarDepois();
+  desenharPlanta();
+  toast(`Escala calibrada. A imagem tem ${fmt(f.wpx * f.escala)} m de largura.`);
+}
+
+// marcadores
+function painelMarcando() {
+  const m = ctx.marcando;
+  return `<div class="pl-sel"><div class="pl-sel-t">Novo marcador</div>
+      <div class="pl-sel-s">Toque na planta onde fica o ambiente. Ele abre a ficha (fotos, observações, instalações) sem precisar medir agora.</div></div>
+    <div class="seg">
+      <button class="chip${m.status === '' ? '' : ' off'}" data-acao="mc-status" data-v="">Ambiente da planta</button>
+      <button class="chip${m.status === 'novo' ? '' : ' off'}" data-acao="mc-status" data-v="novo">Não consta na planta</button>
+    </div>
+    <div class="pl-acoes g2"><span></span><button class="btn btn-ghost" data-acao="mc-cancelar">Cancelar</button></div>`;
+}
+
+function criarMarcador(P) {
+  const L = ctx.lev, pav = pavAtual(L);
+  const a = novoAmbiente(L, pav);
+  Object.assign(a, { forma: 'marcador', pos: { x: r2(P[0]), y: r2(P[1]) }, rot: '0', status: ctx.marcando.status || '' });
+  L.ambientes.push(a);
+  ctx.marcando = null;
+  ctx.sel = a.id;
+  ctx.item = null;
+  salvarDepois();
+  desenharPlanta();
+  toast(`Marcador ${a.codigo} criado. Abra a ficha para registrar.`);
+}
+
+function painelMarcador(a) {
+  const L = ctx.lev;
+  return `<div class="pl-sel">
+      <div class="pl-sel-t"><b class="num">${h(a.codigo)}</b> ${h(a.nome || '(sem nome)')} <span class="st-tag st-${a.status || 'levantar'}">${h(nomeStatus(a.status))}</span></div>
+      <div class="pl-sel-s">Marcador: ainda sem medidas. Arraste para mudar de lugar.</div>
+    </div>
+    ${chipsStatus(a.status)}
+    <div class="pl-acoes g4">
+      <a class="btn btn-primary" href="#/l/${h(L.id)}/a/${h(a.id)}">Ficha</a>
+      <button class="btn btn-ghost" data-acao="mc-desenhar">Desenhar</button>
+      <button class="btn btn-ghost" data-acao="mc-retangulo">Retângulo</button>
+      <button class="btn btn-ghost perigo" data-acao="mc-excluir">Excluir</button>
+    </div>`;
+}
+
+/** Marcador vira ambiente desenhado parede a parede (a ficha continua a mesma). */
+function marcadorParaDesenho(a) {
+  const volta = { pos: { ...a.pos } };
+  Object.assign(a, { forma: 'poli', paredes: [], desenhando: true, pos: null, rot: '0' });
+  ctx.desenho = { amb: a.id, porta: null, deMarcador: volta };
+  ctx.item = null;
+  ctx.sel = a.id;
+  salvarDepois();
+  desenharPlanta();
+  toast('Toque no canto A do ambiente e siga pelos cantos.');
 }
 
 // ── Toque e gestos na planta ──
@@ -1374,7 +1588,10 @@ function ligarGestos(el) {
     arrastar: {
       // arrasta o ambiente selecionado (toque nele e arraste)
       pode: t => {
-        if (ctx.desenho || ctx.item) return false;
+        if (ctx.moverFundo) return true;
+        if (ctx.desenho || ctx.item || ctx.calibrar || ctx.marcando) return false;
+        const mc = t.closest('[data-marc]');
+        if (mc) return mc.dataset.marc === ctx.sel;
         const g = t.closest('[data-amb]');
         const a = g && g.dataset.amb === ctx.sel && ambPorId(ctx.lev, ctx.sel);
         return !!a;
@@ -1397,7 +1614,15 @@ function telaParaPlanta(x, y) {
 const espessuraEntre = L => num(L.espessura) ?? num(ls.get('espessura', '0,15')) ?? 0.15;
 
 function iniciarArrasto(x, y) {
-  const L = ctx.lev, a = ambPorId(L, ctx.sel), R = a && Planta.layout(L, pavAtual(L)).pos.get(a.id);
+  const L = ctx.lev;
+  if (ctx.moverFundo) {
+    const f = fundoDoPav(L, pavAtual(L));
+    if (f) ctx.arrasto = { fundo: true, P0: telaParaPlanta(x, y), pos0: { x: f.x, y: f.y } };
+    return;
+  }
+  const a = ambPorId(L, ctx.sel);
+  if (a && a.forma === 'marcador') { ctx.arrasto = { marcador: true, amb: a.id, P0: telaParaPlanta(x, y), pos0: { ...a.pos } }; return; }
+  const R = a && Planta.layout(L, pavAtual(L)).pos.get(a.id);
   if (!R) return;
   a.pos = { x: R.t[0], y: R.t[1] };
   a.rot = String(R.rot / Planta.RAD);
@@ -1407,6 +1632,12 @@ function iniciarArrasto(x, y) {
 function moverArrasto(x, y) {
   const A = ctx.arrasto, L = ctx.lev;
   if (!A) return;
+  if (A.fundo || A.marcador) {
+    const P = telaParaPlanta(x, y), alvo = A.fundo ? fundoDoPav(L, pavAtual(L)) : ambPorId(L, A.amb).pos;
+    alvo.x = A.pos0.x + P[0] - A.P0[0];
+    alvo.y = A.pos0.y + P[1] - A.P0[1];
+    return agendarPlanta();
+  }
   const a = ambPorId(L, A.amb), pav = pavAtual(L), v = ctx.views[pav];
   const P = telaParaPlanta(x, y);
   const t = [A.pos0.x + P[0] - A.P0[0], A.pos0.y + P[1] - A.P0[1]];
@@ -1424,6 +1655,14 @@ function moverArrasto(x, y) {
 function soltarArrasto(cancelado) {
   const A = ctx.arrasto, L = ctx.lev;
   if (!A) return;
+  if (A.fundo || A.marcador) {
+    const alvo = A.fundo ? fundoDoPav(L, pavAtual(L)) : ambPorId(L, A.amb).pos;
+    if (cancelado) { alvo.x = A.pos0.x; alvo.y = A.pos0.y; }
+    alvo.x = r2(alvo.x); alvo.y = r2(alvo.y);
+    ctx.arrasto = null;
+    salvarDepois();
+    return desenharPlanta();
+  }
   const a = ambPorId(L, A.amb);
   const volta = cancelado || A.invalido;
   if (volta) { a.pos = A.pos0; a.rot = A.rot0; }
@@ -1481,6 +1720,14 @@ function manterConteudo(L, a, antes) {
 
 function tocarPlanta(t, ev) {
   if (ctx.desenho) return tocarDesenho(ev);
+  if (ctx.calibrar && ctx.calibrar.pontos.length < 2) {
+    ctx.calibrar.pontos.push(telaParaPlanta(ev.clientX, ev.clientY));
+    desenharPlanta();
+    if (ctx.calibrar.pontos.length === 2) { const inp = $('#pl-painel [data-fd="dist"]'); if (inp) inp.focus(); }
+    return;
+  }
+  if (ctx.marcando) return criarMarcador(telaParaPlanta(ev.clientX, ev.clientY));
+  if (ctx.moverFundo) return;
   const L = ctx.lev;
   const de = sel => t.closest(sel);
   if (de('[data-mais]')) return abrirVizinho(de('[data-mais]').dataset.mais);
@@ -1489,6 +1736,7 @@ function tocarPlanta(t, ev) {
     if (inp) { inp.focus(); inp.select(); }
     return;
   }
+  if (de('[data-marc]')) { ctx.item = null; ctx.escolha = null; ctx.sel = de('[data-marc]').dataset.marc; return desenharPlanta(); }
   if (de('[data-ponto]')) { const [amb, id] = de('[data-ponto]').dataset.ponto.split('|'); return selecionar({ tipo: 'ponto', amb, id }, amb); }
   if (de('[data-porta]')) { const p = L.portas.find(x => x.id === de('[data-porta]').dataset.porta); return selecionar({ tipo: 'porta', id: p.id }, p.ambA); }
   if (de('[data-obj]')) { const [amb, id] = de('[data-obj]').dataset.obj.split('|'); return selecionar({ tipo: 'obj', amb, id }, amb); }
@@ -1960,12 +2208,12 @@ function montarAbas(L) {
       { t: 'Piso', w: 22 }, { t: 'Parede', w: 22 }, { t: 'Forro / teto', w: 24 }, { t: 'Conservação', w: 12 },
       { t: 'Qtde fotos', w: 10, fmt: 'int' }, { t: 'Arquivos das fotos', w: 34 }, { t: 'Itens de instalação', w: 12, fmt: 'int' },
       { t: 'Pendências', w: 28 }, { t: 'Observações', w: 44 },
-      { t: 'X na planta (m)', w: 13, fmt: 'dec' }, { t: 'Y na planta (m)', w: 13, fmt: 'dec' }, { t: 'Nível do piso (m)', w: 13, fmt: 'dec' },
+      { t: 'X na planta (m)', w: 13, fmt: 'dec' }, { t: 'Y na planta (m)', w: 13, fmt: 'dec' }, { t: 'Nível do piso (m)', w: 13, fmt: 'dec' }, { t: 'Status', w: 16 },
     ],
     linhas: ambs.map(a => {
       const c = calc(a), ret = a.forma === 'ret', ps = posicao.get(a.id);
       return [
-        a.codigo, nomePav(L, a.pavimentoId), a.nome, a.uso, ret ? 'Retangular' : a.forma === 'poli' ? 'Forma livre' : 'Outra forma',
+        a.codigo, nomePav(L, a.pavimentoId), a.nome, a.uso, ret ? 'Retangular' : a.forma === 'poli' ? 'Forma livre' : a.forma === 'marcador' ? 'Marcador (sem medidas)' : 'Outra forma',
         ret ? r2(num(a.comp)) : null, ret ? r2(num(a.larg)) : null,
         ret || a.forma === 'poli' ? '' : txtPartes(a),
         a.forma === 'poli' ? (a.paredes || []).map((p, k) => `${Planta.letra(k)}–${Planta.letra(k + 1)} ${fmt(num(p.c))}${k ? ` (${p.ang}°)` : ''}`).join('; ') : ret ? '' : parseLados(a.lados).map(x => fmt(x)).join('; '),
@@ -1973,7 +2221,7 @@ function montarAbas(L) {
         a.piso, a.parede, a.forro, a.conservacao,
         a.fotos.length, a.fotos.map(f => arq.get(f.id)).join(', '), a.inst.length,
         pendencias(a).join(', '), a.obs,
-        ps ? r2(ps.x) : null, ps ? r2(ps.y) : null, num(a.nivel) ?? 0,
+        ps ? r2(ps.x) : a.forma === 'marcador' && a.pos ? r2(num(a.pos.x)) : null, ps ? r2(ps.y) : a.forma === 'marcador' && a.pos ? r2(num(a.pos.y)) : null, num(a.nivel) ?? 0, nomeStatus(a.status),
       ];
     }),
   };
@@ -2089,7 +2337,7 @@ async function exportar(tipo) {
     blob = new Blob([Planta.dxf(L)], { type: 'application/dxf' });
     nome = base + '_planta.dxf';
   } else {
-    const ids = new Set(L.ambientes.flatMap(fotosDoAmb));
+    const ids = new Set([...L.ambientes.flatMap(fotosDoAmb), ...L.pavimentos.filter(p => p.fundo).map(p => p.fundo.fotoId)]);
     const fotos = (await db.fotosDoLev(L.id)).filter(f => ids.has(f.id));
     blob = new Blob([JSON.stringify({
       formato: FORMATO_BACKUP, versaoDados: 1, app: VERSAO, exportadoEm: new Date().toISOString(), levantamento: L, fotos,
@@ -2132,6 +2380,7 @@ async function importar(file) {
       const mapa = new Map(fotos.map(f => [f.id, uid()]));
       const troca = lista => lista.forEach(f => { f.id = mapa.get(f.id) || uid(); });
       for (const a of L.ambientes) { troca(a.fotos); a.inst.forEach(i => troca(i.fotos)); }
+      for (const pv of L.pavimentos) if (pv.fundo) pv.fundo.fotoId = mapa.get(pv.fundo.fotoId) || pv.fundo.fotoId;
       fotos = fotos.map(f => ({ ...f, id: mapa.get(f.id) }));
     } else return;
   }
@@ -2153,6 +2402,7 @@ document.addEventListener('input', e => {
     return;
   }
   if (el.dataset.dz && ctx.desenho) { aplicarDesenho(el.dataset.dz, el.value); agendarPlanta(); return; }
+  if (el.dataset.fd && el.dataset.fd !== 'dist') { aplicarFundo(el.dataset.fd, el.value); agendarPlanta(); return; }
   if (el.dataset.pe && ctx.item) {
     aplicarPe(el.dataset.pe, el.value);
     agendarPlanta();
@@ -2209,6 +2459,7 @@ document.addEventListener('change', async e => {
     return;
   }
   if (el.id === 'in-cam' || el.id === 'in-gal') { await receberFotos([...el.files]); el.value = ''; return; }
+  if (el.id === 'in-fundo') { if (el.files[0]) await receberFundo(el.files[0]); el.value = ''; return; }
   if (el.id === 'in-import') { if (el.files[0]) await importar(el.files[0]); el.value = ''; return; }
   if (el.id === 'tema') {
     ls.set('tema', el.value);
@@ -2242,7 +2493,7 @@ async function acao(nome, b) {
     case 'importar': $('#in-import').click(); break;
 
     // planta
-    case 'pl-pav': ctx.pavPlanta = id; ctx.sel = null; ctx.item = null; ctx.escolha = null; redesenhar(); break;
+    case 'pl-pav': Object.assign(ctx, { pavPlanta: id, sel: null, item: null, escolha: null, painelFundo: false, calibrar: null, moverFundo: false, marcando: null }); redesenhar(); break;
     case 'pl-sel-porta': { const p = L.portas.find(x => x.id === id); if (p) selecionar({ tipo: 'porta', id }, p.ambA); break; }
     case 'pl-novo-obj': ctx.item = null; ctx.escolha = { tipo: 'obj', base: null }; desenharPlanta(); break;
     case 'ins': {
@@ -2293,6 +2544,45 @@ async function acao(nome, b) {
     case 'pl-enquadrar': ctx.focar = true; desenharPlanta(); break;
     case 'pl-novo-raiz': abrirAmbiente(null); break;
     case 'pl-desenhar': iniciarDesenho(); break;
+    case 'st': {
+      const alvo = ctx.amb || ambPorId(L, ctx.sel);
+      if (!alvo) return;
+      alvo.status = b.dataset.v;
+      salvarDepois();
+      if (ctx.amb) redesenhar(); else desenharPlanta();
+      break;
+    }
+    case 'fd-carregar': {
+      if (fundoDoPav(L, pavAtual(L))) { ctx.painelFundo = true; ctx.sel = null; ctx.item = null; desenharPlanta(); }
+      else $('#in-fundo').click();
+      break;
+    }
+    case 'fd-trocar': $('#in-fundo').click(); break;
+    case 'fd-calibrar': ctx.calibrar = { pontos: [] }; ctx.moverFundo = false; desenharPlanta(); break;
+    case 'fd-cal-aplicar': aplicarCalibracao(); break;
+    case 'fd-cal-cancelar': ctx.calibrar = null; desenharPlanta(); break;
+    case 'fd-mover': ctx.moverFundo = !ctx.moverFundo; desenharPlanta(); break;
+    case 'fd-fechar': ctx.painelFundo = false; ctx.moverFundo = false; ctx.calibrar = null; desenharPlanta(); break;
+    case 'fd-remover': {
+      const pv = L.pavimentos.find(p => p.id === pavAtual(L));
+      if (!pv.fundo || !confirm('Remover a planta de fundo deste pavimento?')) return;
+      await apagarFotos([pv.fundo.fotoId]);
+      delete pv.fundo;
+      ctx.painelFundo = false; ctx.moverFundo = false; ctx.calibrar = null;
+      salvarDepois();
+      desenharPlanta();
+      break;
+    }
+    case 'mc-novo': ctx.marcando = { status: '' }; ctx.sel = null; ctx.item = null; ctx.painelFundo = false; desenharPlanta(); break;
+    case 'mc-status': ctx.marcando.status = b.dataset.v; desenharPlanta(); break;
+    case 'mc-cancelar': ctx.marcando = null; desenharPlanta(); break;
+    case 'mc-desenhar': { const m = ambPorId(L, ctx.sel); if (m) marcadorParaDesenho(m); break; }
+    case 'mc-retangulo': { const m = ambPorId(L, ctx.sel); if (m) abrirAmbiente(m.id); break; }
+    case 'mc-excluir': {
+      const m = ambPorId(L, ctx.sel);
+      if (m && await excluirAmbiente(L, m)) desenharPlanta();
+      break;
+    }
     case 'dz-desfazer': {
       const a2 = ambPorId(L, ctx.desenho.amb);
       if (a2.paredes.length > (a2.ancora ? 1 : 0)) a2.paredes.pop();

@@ -253,3 +253,34 @@ svg.planta.desenhando{cursor:crosshair}
 .pl-fechar{stroke:var(--fc-primary);stroke-width:1.5;stroke-dasharray:6 5;pointer-events:none}
 svg.d3 polygon.d3-parede:not(.d3-topo){stroke-opacity:.18}
 .pl-fundo.invalido{fill:rgba(207,16,48,.28)}
+
+/* ═══ Status, marcadores e planta de fundo ═══ */
+.pl-img-fundo{pointer-events:none}
+.pl-fundo.st-conferido{fill:color-mix(in srgb,var(--fc-success) 22%,var(--fc-surface))}
+.pl-fundo.st-divergente{fill:color-mix(in srgb,var(--fc-warning) 26%,var(--fc-surface))}
+.pl-fundo.st-novo{fill:color-mix(in srgb,var(--fc-info) 20%,var(--fc-surface))}
+.pl-fundo.st-demolido{fill:color-mix(in srgb,var(--fc-muted) 22%,var(--fc-surface))}
+.pl-parede.demolida{stroke-dasharray:6 5;stroke:var(--fc-muted)}
+.pl-fundo{fill-opacity:.88}
+.pl-marc{cursor:pointer}
+.pl-marc path{stroke:var(--fc-surface);stroke-width:2;fill:var(--fc-ink-soft)}
+.pl-marc text{font-family:var(--fc-cond);font-weight:700;font-size:11px;fill:#fff;pointer-events:none}
+.pl-marc .pl-marc-nome{fill:var(--fc-ink);font-family:var(--fc-body);font-weight:500;font-size:11px;paint-order:stroke;stroke:var(--fc-bg);stroke-width:3px}
+.pl-marc.st-conferido path{fill:var(--fc-success)} .pl-marc.st-divergente path{fill:var(--fc-warning)}
+.pl-marc.st-novo path{fill:var(--fc-info)} .pl-marc.st-demolido path{fill:var(--fc-muted)}
+.pl-marc.sel path{stroke:var(--fc-primary);stroke-width:3}
+.pl-calib circle{fill:none;stroke:var(--fc-primary);stroke-width:2}
+.pl-calib path{stroke:var(--fc-primary);stroke-width:1.5}
+.pl-calib-linha{stroke:var(--fc-primary);stroke-width:2;stroke-dasharray:4 4}
+.st-tag{display:inline-flex;align-items:center;gap:4px;border-radius:var(--fc-r-full);padding:1px 9px;font-family:var(--fc-cond);font-weight:600;font-size:11px;letter-spacing:.03em;text-transform:uppercase;border:1px solid var(--fc-border);color:var(--fc-ink-soft);background:var(--fc-surface);white-space:nowrap}
+.st-tag.st-conferido{background:var(--fc-success);border-color:var(--fc-success);color:#fff}
+.st-tag.st-divergente{background:var(--fc-warning);border-color:var(--fc-warning);color:#fff}
+.st-tag.st-novo{background:var(--fc-info);border-color:var(--fc-info);color:#fff}
+.st-tag.st-demolido{background:var(--fc-muted);border-color:var(--fc-muted);color:#fff}
+.st-resumo{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.st-chips .chip.st-chip{font-size:12px;min-height:34px;padding:5px 10px}
+.st-chips .chip.st-conferido.on{background:var(--fc-success)} .st-chips .chip.st-divergente.on{background:var(--fc-warning)}
+.st-chips .chip.st-novo.on{background:var(--fc-info)} .st-chips .chip.st-demolido.on{background:var(--fc-muted)}
+.st-chips .chip.st-levantar.on{background:var(--fc-ink-soft)}
+.btn.ativo{border-color:var(--fc-primary);color:var(--fc-red-text)}
+.pl-zoom{max-height:calc(100% - 16px);overflow:auto}

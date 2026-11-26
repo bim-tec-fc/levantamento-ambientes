@@ -117,6 +117,9 @@
     desnivel: { nome: 'Patamar / desnível', w: 1.5, d: 1.5, h: 0, s: (w, d) => [['rd', 0, 0, w, d]] },
   };
 
+  /** Situação de cada ambiente ou marcador no levantamento (cor na planta). */
+  const STATUS = [['', 'A levantar'], ['conferido', 'Conferido'], ['divergente', 'Divergente'], ['novo', 'Novo (não consta)'], ['demolido', 'Demolido']];
+
   const nivelDe = a => num(a && a.nivel) || 0;
   const pdDe = a => num(a && a.peDireito) || PD_PADRAO;
   /** Distância do canto inicial da parede até o batente mais próximo dele. */
@@ -200,7 +203,10 @@
 
   // ───────────────────────── Posições ─────────────────────────
   function layout(L, pavId) {
-    const ambs = L.ambientes.filter(a => a.pavimentoId === pavId).sort((a, b) => (a.criadoEm || 0) - (b.criadoEm || 0));
+    const doPav = L.ambientes.filter(a => a.pavimentoId === pavId).sort((a, b) => (a.criadoEm || 0) - (b.criadoEm || 0));
+    // marcador: só um ponto na planta (com a ficha), ainda sem medidas
+    const marcadores = doPav.filter(a => a.forma === 'marcador' && a.pos).map(a => ({ a, id: a.id, x: num(a.pos.x) || 0, y: num(a.pos.y) || 0 }));
+    const ambs = doPav.filter(a => a.forma !== 'marcador');
     const porId = new Map(ambs.map(a => [a.id, a]));
     const portas = (L.portas || []).filter(p => porId.has(p.ambA));
     const pos = new Map();
@@ -316,7 +322,7 @@
         });
       }
     }
-    return { pos, portas: geo, pontos, objetos };
+    return { pos, portas: geo, pontos, objetos, marcadores };
   }
 
   function caixa(rs) {
@@ -565,8 +571,10 @@
   }
 
   // ───────────────────────── SVG ─────────────────────────
-  function enquadrar(lay, W, H, ids) {
+  function enquadrar(lay, W, H, ids, extras = []) {
     const rs = [...lay.pos.entries()].filter(([id]) => !ids || ids.includes(id)).map(e => e[1]).filter(r => r.verts.length);
+    if (!ids) for (const m of lay.marcadores || []) rs.push({ bbox: { x0: m.x - 0.5, y0: m.y - 0.5, x1: m.x + 0.5, y1: m.y + 0.5 } });
+    if (!ids) for (const e of extras) rs.push({ bbox: { x0: e[0], y0: e[1], x1: e[2], y1: e[3] } });
     if (!rs.length) return { s: 40, ox: W / 2, oy: H / 2 };
     const b = caixa(rs);
     const m = 0.9;
@@ -588,10 +596,16 @@
     const it = o.item;
     let out = '';
 
-    // fundos
+    // planta de fundo (imagem calibrada): x, y = canto de baixo à esquerda; w, h em metros; rot em graus
+    if (o.fundo && o.fundo.url) {
+      const f = o.fundo;
+      out += `<image class="pl-img-fundo" href="${esc(f.url)}" x="${X(f.x)}" y="${Y(f.y + f.h)}" width="${+(f.w * s).toFixed(1)}" height="${+(f.h * s).toFixed(1)}" preserveAspectRatio="none" opacity="${f.opac}" transform="rotate(${-(f.rot || 0)} ${X(f.x)} ${Y(f.y)})"/>`;
+    }
+    // fundos dos ambientes (com a cor do status)
     for (const [id, R] of lay.pos) {
       if (R.verts.length < 2) continue;
-      const cls = ['pl-fundo', o.sel === id && !it ? 'sel' : '', (o.destaque && o.destaque.includes(id)) || o.desenho === id ? 'dest' : '', o.invalido === id ? 'invalido' : ''].join(' ');
+      const st = R.a.status ? 'st-' + R.a.status : '';
+      const cls = ['pl-fundo', st, o.sel === id && !it ? 'sel' : '', (o.destaque && o.destaque.includes(id)) || o.desenho === id ? 'dest' : '', o.invalido === id ? 'invalido' : ''].join(' ');
       out += `<polygon class="${cls}" data-amb="${esc(id)}" points="${R.verts.map(P).join(' ')}"/>`;
       if (!R.fechado && R.verts.length > 2) out += ln(R.verts[R.verts.length - 1], R.verts[0], 'pl-fechar');
     }
@@ -609,7 +623,7 @@
       out += '</g>';
     }
     // paredes, batentes, folhas e janelas
-    out += ls.paredes.map(l => ln([l[0], l[1]], [l[2], l[3]], 'pl-parede')).join('');
+    out += ls.paredes.map(l => ln([l[0], l[1]], [l[2], l[3]], (lay.pos.get(l[4]) || {}).a && lay.pos.get(l[4]).a.status === 'demolido' ? 'pl-parede demolida' : 'pl-parede')).join('');
     out += ls.batentes.map(l => ln([l[0], l[1]], [l[2], l[3]], 'pl-batente')).join('');
     for (const pr of ls.simbolos) {
       const sel = it && it.tipo === 'porta' && it.id === pr.porta ? ' sel' : '';
@@ -682,6 +696,19 @@
         (c.campo ? `<rect class="pl-cota-alvo" x="${tx - 22}" y="${ty - 15}" width="44" height="20" rx="4"/>` : '') +
         `<text x="${tx}" y="${ty}" text-anchor="middle">${esc(c.txt)}</text></g>`;
     }
+    // marcadores (ambientes ainda sem medidas)
+    for (const m of lay.marcadores || []) {
+      const cx = X(m.x), cy = Y(m.y), sel = o.sel === m.id;
+      out += `<g class="pl-marc st-${esc(m.a.status || 'levantar')}${sel ? ' sel' : ''}" data-marc="${esc(m.id)}">` +
+        `<path d="M${cx} ${cy}c-9-12-14-18-14-25a14 14 0 1 1 28 0c0 7-5 13-14 25z"/>` +
+        `<text x="${cx}" y="${cy - 21}" text-anchor="middle">${esc((m.a.codigo || '').replace(/^.*-/, ''))}</text>` +
+        (m.a.nome && s > 12 ? `<text class="pl-marc-nome" x="${cx}" y="${cy + 13}" text-anchor="middle">${esc(cortar(m.a.nome, 18))}</text>` : '') + '</g>';
+    }
+    // pontos da calibração da planta de fundo
+    for (const c of o.calib || []) {
+      out += `<g class="pl-calib"><circle cx="${X(c[0])}" cy="${Y(c[1])}" r="7"/><path d="M${X(c[0]) - 11} ${Y(c[1])}H${X(c[0]) + 11}M${X(c[0])} ${Y(c[1]) - 11}V${Y(c[1]) + 11}"/></g>`;
+    }
+    if ((o.calib || []).length === 2) out += ln(o.calib[0], o.calib[1], 'pl-calib-linha');
     // "+" nas portas sem ambiente do outro lado
     if (o.mais) {
       for (const g of lay.portas) {
@@ -744,8 +771,8 @@
     let desloc = 0;
     for (const pav of L.pavimentos) {
       const lay = layout(L, pav.id);
-      if (!lay.pos.size) continue;
-      const b = caixa([...lay.pos.values()]);
+      if (!lay.pos.size && !lay.marcadores.length) continue;
+      const b = caixa([...lay.pos.values(), ...lay.marcadores.map(m => ({ bbox: { x0: m.x, y0: m.y, x1: m.x, y1: m.y } }))]);
       const dx = desloc - b.x0;
       const ls = linhas(lay);
       for (const l of ls.paredes) linha('PAREDES', l[0] + dx, l[1], l[2] + dx, l[3]);
@@ -782,11 +809,15 @@
         if (R.area != null) texto('TEXTOS', cx, cy - 0.25, 0.12, `${fmt(R.area)} m2`);
         if (R.nivel) texto('TEXTOS', cx, cy - 0.45, 0.12, `NV ${fmtNivel(R.nivel)}`);
       }
+      for (const m of lay.marcadores) {
+        circulo('MARCADORES', m.x + dx, m.y, 0.3);
+        texto('MARCADORES', m.x + dx, m.y + 0.5, 0.15, `${m.a.codigo || ''} ${m.a.nome || ''}`.trim());
+      }
       texto('TEXTOS', desloc + (b.x1 - b.x0) / 2, b.y1 + 1, 0.4, pav.nome || pav.sigla || 'Pavimento');
       desloc += (b.x1 - b.x0) + 10;
     }
     const camadas = [['PAREDES', 7, 'CONTINUOUS'], ['ESQUADRIAS', 3, 'CONTINUOUS'], ['ACIMA_DO_CORTE', 4, 'DASHED'],
-      ['MOBILIARIO', 8, 'CONTINUOUS'], ['DESNIVEIS', 6, 'DASHED'], ['INSTALACOES', 1, 'CONTINUOUS'], ['TEXTOS', 2, 'CONTINUOUS']];
+      ['MOBILIARIO', 8, 'CONTINUOUS'], ['DESNIVEIS', 6, 'DASHED'], ['INSTALACOES', 1, 'CONTINUOUS'], ['MARCADORES', 5, 'CONTINUOUS'], ['TEXTOS', 2, 'CONTINUOUS']];
     return [
       '0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1009\n0\nENDSEC',
       '0\nSECTION\n2\nTABLES',
@@ -952,6 +983,6 @@
   raiz.Planta = {
     layout, linhas, conferir, enquadrar, svg, cotaBoneca, cotaLargura, infoItem, segmentoEm, vaosDaParede, dxf, caixa, iconeObjeto,
     formaLocal, areaPerimetro, converterAntigo, letra, ptW, paredesDe, sobrepoe, colocar, fixarPosicoes, imantar, bateEm,
-    ESPESSURA_PADRAO, PD_PADRAO, MODELOS, PADRAO_ABERTURA, PONTOS, BIBLIOTECA, ehJanela, canon, fmtNivel, nivelDe, pdDe, RAD,
+    STATUS, ESPESSURA_PADRAO, PD_PADRAO, MODELOS, PADRAO_ABERTURA, PONTOS, BIBLIOTECA, ehJanela, canon, fmtNivel, nivelDe, pdDe, RAD,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

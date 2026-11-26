@@ -8,6 +8,18 @@ Responsável: Melqui Domingos, Núcleo BIM.
 
 ## O que faz
 
+### Planta de fundo, marcadores e status (v1.3)
+
+- **Planta de fundo:** carregue a planta existente como imagem (JPG ou PNG; para PDF, exporte a página
+  como imagem). Calibre a escala tocando nas duas pontas de uma medida conhecida e informando o valor
+  real. Ajuste transparência e rotação e, se precisar, mova a imagem. Depois desenhe por cima dela.
+- **Marcadores:** **+ Marcador** e um toque na planta criam o ambiente sem medir: a ficha (fotos,
+  observações, instalações) já fica disponível. Marque como **Não consta na planta** quando for um
+  ambiente novo. Mais tarde, o marcador vira ambiente medido (**Desenhar** ou **Retângulo**) mantendo a ficha.
+- **Status:** cada ambiente ou marcador pode estar **A levantar**, **Conferido**, **Divergente**,
+  **Novo (não consta)** ou **Demolido**. A cor aparece na planta, na lista, na ficha e na planilha,
+  com o resumo de quantos há em cada um.
+
 ### Planta baixa (v1.2)
 
 **Ambientes.** Cada ambiente é um polígono de paredes internas. Os cantos recebem letras (A, B, C…)
