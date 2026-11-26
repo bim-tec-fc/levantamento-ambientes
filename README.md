@@ -16,6 +16,8 @@ e as paredes são chamadas pelos cantos (parede A–B).
 - **Retângulo:** informe comprimento (A–B) e largura (B–C).
 - **Forma livre (paredes fora do esquadro):** toque em **Desenhar parede a parede**, depois no canto A
   e em cada canto seguinte. A medida e o ângulo vêm do toque; ajuste os valores exatos nos campos.
+  O desenho usa esquadro: se a parede nova estiver até 30° do esquadro com a anterior, ela fica a 90°;
+  o canto também se alinha com os cantos já marcados (inclusive o A), para a última parede fechar reta.
   O ângulo é o **interno**, entre a parede anterior e a nova (90 = esquadro, 270 = canto de um "L").
   Pode marcar os cantos em qualquer sentido. A última parede fecha sozinha; se ela foi medida,
   informe em **Medidas** e a ferramenta avisa se o desenho não fecha.

@@ -8,7 +8,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 'use strict';
 
-const VERSAO = '1.2.0';
+const VERSAO = '1.2.1';
 const FORMATO_BACKUP = 'fc-levantamento-ambientes';
 
 // ───────────────────────── Listas padrão ─────────────────────────
@@ -710,10 +710,10 @@ const vnum = n => n == null || !Number.isFinite(n) ? '' : String(r2(n)).replace(
 const vexib = n => n == null || !Number.isFinite(n) ? '' : n.toFixed(2).replace('.', ',');
 const ICONE_ENQUADRAR = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>';
 /** Ângulo arredondado de 5 em 5 graus; perto do esquadro, fica no esquadro. */
-function arredAng(g, volta = true) {
+function arredAng(g, volta = true, esquadro = 4) {
   if (volta) g = ((g % 360) + 360) % 360;
   const q = Math.round(g / 90) * 90;
-  const r = Math.abs(g - q) <= 4 ? q : Math.round(g / 5) * 5;
+  const r = Math.abs(g - q) <= esquadro ? q : Math.round(g / 5) * 5;
   return volta ? r % 360 : r;
 }
 const arredMedida = m => Math.max(0.05, Math.round(m / 0.05) * 0.05);
@@ -1216,20 +1216,46 @@ function tocarDesenho(ev) {
     const A0 = R.verts[0], ult = R.verts[R.verts.length - 1];
     // tocar perto do canto A fecha o ambiente
     if (a.paredes.length >= 2 && Math.hypot(P[0] - A0[0], P[1] - A0[1]) * v.s < 18) return fecharDesenho();
-    const d = [P[0] - ult[0], P[1] - ult[1]], c = Math.hypot(d[0], d[1]);
-    if (c < 0.05) return;
+    const d = [P[0] - ult[0], P[1] - ult[1]];
+    if (Math.hypot(d[0], d[1]) < 0.05) return;
     const rumo = Math.atan2(d[1], d[0]) / Planta.RAD;
+    // Esquadro: a direção é ajustada e o comprimento é a projeção do toque nela,
+    // para o canto cair na linha certa e não "fugir" do lugar tocado.
+    const tol = 14 / v.s;                                          // ~14 px na tela, em metros
+    const medir = (dirGraus, alinhar) => {
+      const u = [Math.cos(dirGraus * Planta.RAD), Math.sin(dirGraus * Planta.RAD)];
+      let c = d[0] * u[0] + d[1] * u[1];
+      if (c < 0.05) return null;
+      // alinha com um canto já marcado (inclusive o A): ajuda a fechar retângulos e "L"
+      let alinhou = false;
+      if (alinhar) {
+        let melhor = null;
+        for (const V of R.verts.slice(0, -1)) {
+          const cc = (V[0] - ult[0]) * u[0] + (V[1] - ult[1]) * u[1];
+          if (cc > 0.05 && Math.abs(cc - c) < tol && (melhor == null || Math.abs(cc - c) < Math.abs(melhor - c))) melhor = cc;
+        }
+        if (melhor != null) { c = melhor; alinhou = true; }
+      }
+      return vnum(alinhou ? c : arredMedida(c));
+    };
     if (a.paredes.length === 0) {
-      a.rot = String(arredAng(rumo));
-      a.paredes.push({ c: vnum(arredMedida(c)) });
+      // 1ª parede: perto da horizontal/vertical, fica nela
+      const dir = arredAng(rumo, true, 10);
+      const c = medir(dir, false);
+      if (!c) return;
+      a.rot = String(dir);
+      a.paredes.push({ c });
     } else {
       const anterior = (R.rot + R.local.rumoFinal) / Planta.RAD;
-      let giro = rumo - anterior;
-      giro = ((giro + 540) % 360) - 180;                    // entre −180 e 180 (positivo = virou à esquerda)
+      let giro = ((rumo - anterior + 540) % 360) - 180;          // entre −180 e 180 (positivo = virou à esquerda)
       // a primeira curva define o sentido: virar à esquerda = anti-horário (interior à esquerda)
       if (a.paredes.length === 1 && !a.ancora) a.sentido = giro < 0 ? 'horario' : 'anti';
       const sentido = a.sentido === 'horario' ? -1 : 1;
-      a.paredes.push({ c: vnum(arredMedida(c)), ang: String(arredAng(180 - sentido * giro, false)) });
+      // o normal é a parede seguinte estar a 90° da anterior: até 30° de diferença, vira esquadro
+      const giroAj = Math.abs(Math.abs(giro) - 90) <= 30 ? Math.sign(giro) * 90 : Math.round(giro / 5) * 5;
+      const c = medir(anterior + giroAj, true);
+      if (!c) return;
+      a.paredes.push({ c, ang: String(180 - sentido * giroAj) });
     }
   }
   salvarDepois();
