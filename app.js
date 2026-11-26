@@ -8,7 +8,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 'use strict';
 
-const VERSAO = '1.3.0';
+const VERSAO = '1.3.1';
 const FORMATO_BACKUP = 'fc-levantamento-ambientes';
 
 // ───────────────────────── Listas padrão ─────────────────────────
@@ -789,23 +789,30 @@ function iniciarPlanta() {
   desenharPlanta();
 }
 
+/**
+ * Tamanho do desenho em px. Sem viewBox: 1 unidade = 1 px da tela, a partir do canto de cima à
+ * esquerda. Assim, se a área mudar de tamanho (painel abrindo, teclado), o desenho não estica
+ * nem desloca, e o toque continua caindo exatamente onde está o traço.
+ */
 function tamanhoSvg(el) {
-  const W = el.clientWidth || 360, H = el.clientHeight || 400;
-  el.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  return [W, H];
+  el.removeAttribute('viewBox');
+  return [el.clientWidth || 360, el.clientHeight || 400];
 }
 function opcoesPlanta() {
   const L = ctx.lev, pav = pavAtual(L), d = ctx.desenho, a = d && ambPorId(L, d.amb), arr = ctx.arrasto;
   const fundo = opcaoFundo(L, pav), calib = ctx.calibrar ? ctx.calibrar.pontos : null;
   if (arr) return { sel: arr.amb, item: null, mais: false, toque: false, destaque: [arr.amb], invalido: arr.invalido ? arr.amb : null, fundo };
   const livre = !d && !ctx.calibrar && !ctx.marcando && !ctx.moverFundo;
-  return { sel: ctx.sel, item: ctx.item, mais: false, toque: livre, desenho: a && (a.pos || a.ancora) ? a.id : null, fundo, calib };
+  return { sel: ctx.sel, item: ctx.item, mais: false, toque: livre, desenho: a && (a.pos || a.ancora) ? a.id : null, fundo, calib, mira: opcaoMira() };
 }
 
 function desenharPlanta() {
   const L = ctx.lev, el = $('#planta');
   if (!L || !el) return;
   const pav = pavAtual(L);
+  // painel de altura fixa no desenho (antes de medir a área): a planta não muda de tamanho a cada toque
+  const pn = $('#pl-painel');
+  if (pn) pn.classList.toggle('fixo', !!ctx.desenho);
   const lay = Planta.layout(L, pav);
   if (ctx.sel && !lay.pos.has(ctx.sel) && !lay.marcadores.some(m => m.id === ctx.sel)) { ctx.sel = null; ctx.item = null; }
   if (ctx.item && !Planta.infoItem(lay, ctx.item)) ctx.item = null;
@@ -1201,17 +1208,18 @@ function painelDesenho() {
   if (!a) { ctx.desenho = null; return ''; }
   const ps = a.paredes, n = ps.length;
   const dica = !a.pos && !a.ancora ? 'Toque na planta onde fica o <b>canto A</b>.'
-    : n === 0 ? 'Toque no <b>canto B</b>. Depois ajuste a medida e a direção.'
-      : `Toque no próximo canto (<b>${letra(n + 1)}</b>) ou em <b>Fechar</b> quando faltar só a última parede.`;
+    : n === 0 ? 'Toque no <b>canto B</b> (a parede fica na horizontal ou na vertical). Depois ajuste a medida.'
+      : `Toque no próximo canto (<b>${letra(n + 1)}</b>): a parede vira 90° para o lado do toque. Ou toque em <b>Fechar</b> quando faltar só a última parede.`;
+  const dicaGesto = '<span class="dz-gesto">Um toque curto marca o canto. Mover e aproximar: dois dedos.</span>';
   const linhas = ps.map((p, k) => `<div class="dz-linha">
       <span class="dz-par num">${letra(k)}–${letra(k + 1)}</span>
       ${campoPe('Comprimento (m)', `c:${k}`, p.c, { attr: 'data-dz' })}
       ${k === 0
         ? (a.ancora ? '<div class="field"><span class="fc-label">Direção</span><span class="dica">a da porta</span></div>'
-          : campoPe('Direção (graus)', 'rot', a.rot, { attr: 'data-dz', dica: '0 = para a direita' }))
-        : campoPe(`Ângulo em ${letra(k)} (graus)`, `ang:${k}`, p.ang, { attr: 'data-dz', dica: 'interno; 90 = esquadro' })}
+          : campoPe('Direção (graus)', 'rot', a.rot, { attr: 'data-dz', dica: '0 = para a direita; parede inclinada: digite' }))
+        : campoPe(`Ângulo em ${letra(k)} (graus)`, `ang:${k}`, p.ang, { attr: 'data-dz', dica: 'interno; 90 = esquadro; outro: digite' })}
     </div>`).join('');
-  return `<div class="pl-sel"><div class="pl-sel-t">Desenhando <b class="num">${h(a.codigo)}</b></div><div class="pl-sel-s">${dica}</div></div>
+  return `<div class="pl-sel"><div class="pl-sel-t">Desenhando <b class="num">${h(a.codigo)}</b></div><div class="pl-sel-s">${dica} ${dicaGesto}</div></div>
     ${campoPe('Nome do ambiente', 'nome', a.nome, { numero: false, attr: 'data-dz', extra: 'placeholder="Ex.: Recepção" autocapitalize="sentences"' })}
     ${linhas}
     ${n >= 2 ? `<p class="dica">A última parede (${letra(n)}–A) é calculada ao fechar.</p>` : ''}
@@ -1222,66 +1230,86 @@ function painelDesenho() {
     </div>`;
 }
 
+/**
+ * Onde cai o próximo canto do desenho para um ponto P da planta (sem gravar nada).
+ * Esquadro: a 1ª parede fica na horizontal ou na vertical e cada parede seguinte vira 90° para
+ * o lado do toque. Outro ângulo a pessoa digita depois, no campo. O comprimento é a projeção do
+ * toque nessa direção, alinhado a um canto já marcado quando passa perto dele.
+ */
+function proximoCanto(P) {
+  const L = ctx.lev, a = ctx.desenho && ambPorId(L, ctx.desenho.amb), pav = pavAtual(L), v = ctx.views[pav];
+  if (!a || !v) return null;
+  if (!a.pos && !a.ancora) return { tipo: 'A', ate: [r2(P[0]), r2(P[1])] };
+  const R = Planta.layout(L, pav).pos.get(a.id);
+  if (!R) return null;
+  const A0 = R.verts[0], ult = R.verts[R.verts.length - 1];
+  // tocar perto do canto A fecha o ambiente
+  if (a.paredes.length >= 2 && Math.hypot(P[0] - A0[0], P[1] - A0[1]) * v.s < 18) return { tipo: 'fechar', de: ult, ate: A0 };
+  const d = [P[0] - ult[0], P[1] - ult[1]];
+  const rumo = Math.atan2(d[1], d[0]) / Planta.RAD;
+  const tol = 14 / v.s;                                            // ~14 px na tela, em metros
+  const medir = (dirGraus, alinhar) => {
+    const u = [Math.cos(dirGraus * Planta.RAD), Math.sin(dirGraus * Planta.RAD)];
+    let c = d[0] * u[0] + d[1] * u[1], alinhou = false;
+    if (c < 0.05) return null;
+    if (alinhar) {
+      let melhor = null;
+      for (const V of R.verts.slice(0, -1)) {
+        const cc = (V[0] - ult[0]) * u[0] + (V[1] - ult[1]) * u[1];
+        if (cc > 0.05 && Math.abs(cc - c) < tol && (melhor == null || Math.abs(cc - c) < Math.abs(melhor - c))) melhor = cc;
+      }
+      if (melhor != null) { c = melhor; alinhou = true; }
+    }
+    if (!alinhou) c = arredMedida(c);
+    return { c, ate: [ult[0] + u[0] * c, ult[1] + u[1] * c] };
+  };
+  if (a.paredes.length === 0) {
+    const dir = (Math.round(rumo / 90) * 90 + 360) % 360;          // só 0, 90, 180 ou 270
+    const m = medir(dir, false);
+    return m ? { tipo: 'parede', de: ult, ate: m.ate, c: m.c, rot: dir } : { tipo: 'erro', de: ult };
+  }
+  const anterior = (R.rot + R.local.rumoFinal) / Planta.RAD;
+  const giro = ((rumo - anterior + 540) % 360) - 180;              // positivo = virou à esquerda
+  const giroAj = giro >= 0 ? 90 : -90;                             // sempre esquadro
+  // a primeira curva define o sentido: virar à esquerda = anti-horário (interior à esquerda)
+  const sentidoTxt = a.paredes.length === 1 && !a.ancora ? (giroAj < 0 ? 'horario' : 'anti') : a.sentido;
+  const sentido = sentidoTxt === 'horario' ? -1 : 1;
+  const m = medir(anterior + giroAj, true);
+  return m ? { tipo: 'parede', de: ult, ate: m.ate, c: m.c, ang: 180 - sentido * giroAj, sentido: sentidoTxt } : { tipo: 'erro', de: ult };
+}
+
 /** Toque na planta durante o desenho: marca o próximo canto. */
 function tocarDesenho(ev) {
-  const L = ctx.lev, a = ambPorId(L, ctx.desenho.amb), pav = pavAtual(L), v = ctx.views[pav];
-  if (!a || !v) return;
-  const r = $('#planta').getBoundingClientRect();
-  const P = [(ev.clientX - r.left - v.ox) / v.s, (v.oy - (ev.clientY - r.top)) / v.s];
-  if (!a.pos && !a.ancora) {
-    a.pos = { x: r2(P[0]), y: r2(P[1]) };
-  } else {
-    const R = Planta.layout(L, pav).pos.get(a.id);
-    if (!R) return;
-    const A0 = R.verts[0], ult = R.verts[R.verts.length - 1];
-    // tocar perto do canto A fecha o ambiente
-    if (a.paredes.length >= 2 && Math.hypot(P[0] - A0[0], P[1] - A0[1]) * v.s < 18) return fecharDesenho();
-    const d = [P[0] - ult[0], P[1] - ult[1]];
-    if (Math.hypot(d[0], d[1]) < 0.05) return;
-    const rumo = Math.atan2(d[1], d[0]) / Planta.RAD;
-    // Esquadro: a direção é ajustada e o comprimento é a projeção do toque nela,
-    // para o canto cair na linha certa e não "fugir" do lugar tocado.
-    const tol = 14 / v.s;                                          // ~14 px na tela, em metros
-    const medir = (dirGraus, alinhar) => {
-      const u = [Math.cos(dirGraus * Planta.RAD), Math.sin(dirGraus * Planta.RAD)];
-      let c = d[0] * u[0] + d[1] * u[1];
-      if (c < 0.05) return null;
-      // alinha com um canto já marcado (inclusive o A): ajuda a fechar retângulos e "L"
-      let alinhou = false;
-      if (alinhar) {
-        let melhor = null;
-        for (const V of R.verts.slice(0, -1)) {
-          const cc = (V[0] - ult[0]) * u[0] + (V[1] - ult[1]) * u[1];
-          if (cc > 0.05 && Math.abs(cc - c) < tol && (melhor == null || Math.abs(cc - c) < Math.abs(melhor - c))) melhor = cc;
-        }
-        if (melhor != null) { c = melhor; alinhou = true; }
-      }
-      return vnum(alinhou ? c : arredMedida(c));
-    };
-    if (a.paredes.length === 0) {
-      // 1ª parede: perto da horizontal/vertical, fica nela
-      const dir = arredAng(rumo, true, 10);
-      const c = medir(dir, false);
-      if (!c) return;
-      a.rot = String(dir);
-      a.paredes.push({ c });
-    } else {
-      const anterior = (R.rot + R.local.rumoFinal) / Planta.RAD;
-      let giro = ((rumo - anterior + 540) % 360) - 180;          // entre −180 e 180 (positivo = virou à esquerda)
-      // a primeira curva define o sentido: virar à esquerda = anti-horário (interior à esquerda)
-      if (a.paredes.length === 1 && !a.ancora) a.sentido = giro < 0 ? 'horario' : 'anti';
-      const sentido = a.sentido === 'horario' ? -1 : 1;
-      // o normal é a parede seguinte estar a 90° da anterior: até 30° de diferença, vira esquadro
-      const giroAj = Math.abs(Math.abs(giro) - 90) <= 30 ? Math.sign(giro) * 90 : Math.round(giro / 5) * 5;
-      const c = medir(anterior + giroAj, true);
-      if (!c) return;
-      a.paredes.push({ c, ang: String(180 - sentido * giroAj) });
-    }
+  const a = ambPorId(ctx.lev, ctx.desenho.amb);
+  const k = a && proximoCanto(telaParaPlanta(ev.clientX, ev.clientY));
+  ctx.mira = null;
+  if (!k) return;
+  if (k.tipo === 'fechar') return fecharDesenho();
+  if (k.tipo === 'erro') { agendarPlanta(); return toast('Toque para o lado em que a parede segue (90° da anterior). Outro ângulo, digite no campo.'); }
+  if (k.tipo === 'A') a.pos = { x: k.ate[0], y: k.ate[1] };
+  else if (a.paredes.length === 0) { a.rot = String(k.rot); a.paredes.push({ c: vnum(k.c) }); }
+  else {
+    if (k.sentido) a.sentido = k.sentido;
+    a.paredes.push({ c: vnum(k.c), ang: String(k.ang) });
   }
   salvarDepois();
   desenharPlanta();
   const ult = $$('#pl-painel [data-dz^="c:"]').pop();
   if (ult) ult.scrollIntoView({ block: 'nearest' });
+}
+
+/** Prévia do próximo canto (mouse parado sobre a planta ou dedo encostado). */
+function mirar(x, y) {
+  if (!ctx.desenho) { if (ctx.mira) { ctx.mira = null; agendarPlanta(); } return; }
+  ctx.mira = x == null ? null : telaParaPlanta(x, y);
+  agendarPlanta();
+}
+function opcaoMira() {
+  if (!ctx.desenho || !ctx.mira) return null;
+  const k = proximoCanto(ctx.mira);
+  if (!k) return null;
+  if (k.tipo === 'erro') return { de: k.de, ate: ctx.mira, erro: true };
+  return { de: k.de || null, ate: k.ate, txt: k.tipo === 'parede' ? fmt(k.c) : '', fecha: k.tipo === 'fechar' };
 }
 
 function aplicarDesenho(k, val) {
@@ -1522,56 +1550,71 @@ function zoomPlanta(v, f, px, py) {
 }
 
 /**
- * Arrastar move, dois dedos (ou a roda do mouse) aproximam; toque sem arrastar chama aoTocar.
- * arrastar (opcional): quando pode(alvo) é verdadeiro no toque inicial, o arraste vai para ele
- * em vez de mover a vista: inicio(x, y), mover(x, y), soltar(cancelado).
+ * Gestos na planta, como uma folha na prancheta:
+ * - dedo (ou caneta): um toque curto chama aoTocar no ponto onde o dedo encostou; arrastar com um
+ *   dedo não move a planta (só arrasta o ambiente selecionado, quando arrastar.pode permite);
+ * - dois dedos: movem e aproximam/afastam a planta juntos;
+ * - mouse: arrastar move a planta, a roda aproxima, clique chama aoTocar, passar por cima chama mirar.
+ * arrastar (opcional): inicio(x, y), mover(x, y), soltar(cancelado), pode(alvo).
+ * umDedo: um dedo também chama mover (vista 3D: girar); aí dois dedos só aproximam.
  */
-function gestos(el, { mover, zoom, aoTocar, arrastar }) {
+function gestos(el, { mover, zoom, aoTocar, arrastar, mirar, umDedo = false }) {
   const pts = new Map();
-  let ini = null, moveu = false, alvo = null, pinca = null, arr = false, arrIniciado = false;
+  let ini = null, moveu = false, alvo = null, dois = null, arr = false, arrIniciado = false, varios = false;
+  const limite = e => e.pointerType === 'mouse' ? 5 : 12;              // px que o dedo pode escorregar num toque
+  const centro = () => { const [a, b] = [...pts.values()]; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) }; };
   el.addEventListener('pointerdown', e => {
-    el.setPointerCapture(e.pointerId);
-    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    try { el.setPointerCapture(e.pointerId); } catch { }
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY, tipo: e.pointerType });
     if (pts.size === 1) {
-      ini = { x: e.clientX, y: e.clientY }; moveu = false; alvo = e.target;
+      ini = { x: e.clientX, y: e.clientY, tipo: e.pointerType }; moveu = false; alvo = e.target; varios = false;
       arr = !!(arrastar && arrastar.pode(e.target)); arrIniciado = false;
-    } else if (pts.size === 2) {
+      if (mirar && e.pointerType !== 'mouse') mirar(e.clientX, e.clientY);
+    } else {
+      // segundo dedo: vira gesto de mover/aproximar; nenhum toque é marcado
+      varios = true; moveu = true;
       if (arrIniciado) { arrastar.soltar(true); arrIniciado = false; }
       arr = false;
-      const [a, b] = [...pts.values()]; pinca = Math.hypot(a.x - b.x, a.y - b.y); moveu = true;
+      if (mirar) mirar(null);
+      if (pts.size === 2) dois = centro();
     }
   });
   el.addEventListener('pointermove', e => {
-    if (!pts.has(e.pointerId)) return;
-    const ant = pts.get(e.pointerId), at = { x: e.clientX, y: e.clientY };
+    if (!pts.has(e.pointerId)) {
+      if (mirar && e.pointerType === 'mouse' && !e.buttons) mirar(e.clientX, e.clientY);
+      return;
+    }
+    const ant = pts.get(e.pointerId), at = { x: e.clientX, y: e.clientY, tipo: e.pointerType };
     pts.set(e.pointerId, at);
-    if (pts.size === 1) {
-      if (!moveu && Math.hypot(at.x - ini.x, at.y - ini.y) > 6) moveu = true;
+    if (pts.size === 1 && !varios) {
+      if (!moveu && Math.hypot(at.x - ini.x, at.y - ini.y) > limite(e)) { moveu = true; if (mirar) mirar(null); }
       if (!moveu) return;
       if (arr) {
         if (!arrIniciado) { arrastar.inicio(ini.x, ini.y); arrIniciado = true; }
         arrastar.mover(at.x, at.y);
-      } else mover(at.x - ant.x, at.y - ant.y);
-    } else if (pts.size === 2 && pinca) {
-      const [a, b] = [...pts.values()], d = Math.hypot(a.x - b.x, a.y - b.y), r = el.getBoundingClientRect();
-      zoom(d / pinca, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
-      pinca = d;
+      } else if (umDedo || e.pointerType === 'mouse') mover(at.x - ant.x, at.y - ant.y);
+      // dedo sozinho arrastando: a planta fica parada (é uma folha na prancheta)
+    } else if (pts.size === 2 && dois) {
+      const c = centro(), r = el.getBoundingClientRect();
+      if (!umDedo) mover(c.x - dois.x, c.y - dois.y);
+      if (dois.d > 0 && c.d > 0) zoom(c.d / dois.d, c.x - r.left, c.y - r.top);
+      dois = c;
     }
   });
-  el.addEventListener('pointerup', e => {
+  const fim = (e, cancelado) => {
     if (!pts.has(e.pointerId)) return;
     pts.delete(e.pointerId);
-    if (pts.size < 2) pinca = null;
-    if (pts.size === 0) {
-      if (arrIniciado) { arrastar.soltar(false); arrIniciado = false; }
-      else if (!moveu && alvo && aoTocar) aoTocar(alvo, e);
-      alvo = null; arr = false;
-    }
-  });
-  el.addEventListener('pointercancel', e => {
-    pts.delete(e.pointerId); pinca = null; moveu = true;
-    if (arrIniciado) { arrastar.soltar(true); arrIniciado = false; }
-  });
+    if (pts.size === 2) dois = centro(); else dois = null;
+    if (pts.size > 0) return;
+    if (arrIniciado) arrastar.soltar(!!cancelado);
+    else if (!cancelado && !moveu && !varios && alvo && aoTocar) aoTocar(alvo, { clientX: ini.x, clientY: ini.y, pointerType: ini.tipo });
+    else if (mirar && ini && ini.tipo !== 'mouse') mirar(null);
+    arrIniciado = false; alvo = null; arr = false;
+  };
+  el.addEventListener('pointerup', e => fim(e, false));
+  el.addEventListener('pointercancel', e => fim(e, true));
+  el.addEventListener('pointerleave', e => { if (mirar && e.pointerType === 'mouse' && !pts.size) mirar(null); });
   el.addEventListener('wheel', e => {
     e.preventDefault();
     const r = el.getBoundingClientRect();
@@ -1585,6 +1628,7 @@ function ligarGestos(el) {
     mover: (dx, dy) => { const v = vista(); if (v) { v.ox += dx; v.oy += dy; agendarPlanta(); } },
     zoom: (f, px, py) => { const v = vista(); if (v) { zoomPlanta(v, f, px, py); agendarPlanta(); } },
     aoTocar: tocarPlanta,
+    mirar,
     arrastar: {
       // arrasta o ambiente selecionado (toque nele e arraste)
       pode: t => {
@@ -2049,6 +2093,7 @@ function abrir3D() {
   gestos(el, {
     mover: (dx, dy) => { v3.az += dx * 0.01; v3.el = Math.max(0.08, Math.min(1.5, v3.el + dy * 0.008)); desenhar3D(); },
     zoom: f => { v3.s = Math.max(3, Math.min(800, v3.s * f)); desenhar3D(); },
+    umDedo: true,
   });
 }
 function desenhar3D(enquadrar) {

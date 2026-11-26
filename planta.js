@@ -709,6 +709,13 @@
       out += `<g class="pl-calib"><circle cx="${X(c[0])}" cy="${Y(c[1])}" r="7"/><path d="M${X(c[0]) - 11} ${Y(c[1])}H${X(c[0]) + 11}M${X(c[0])} ${Y(c[1]) - 11}V${Y(c[1]) + 11}"/></g>`;
     }
     if ((o.calib || []).length === 2) out += ln(o.calib[0], o.calib[1], 'pl-calib-linha');
+    // prévia do próximo canto no desenho (onde o toque vai marcar)
+    if (o.mira) {
+      const m = o.mira, cx = X(m.ate[0]), cy = Y(m.ate[1]);
+      if (m.de) out += ln(m.de, m.ate, 'pl-mira-linha' + (m.erro ? ' erro' : ''));
+      out += `<g class="pl-mira${m.erro ? ' erro' : ''}${m.fecha ? ' fecha' : ''}"><circle cx="${cx}" cy="${cy}" r="9"/><path d="M${cx - 16} ${cy}H${cx - 5}M${cx + 5} ${cy}H${cx + 16}M${cx} ${cy - 16}V${cy - 5}M${cx} ${cy + 5}V${cy + 16}"/>` +
+        (m.txt ? `<text x="${cx + 14}" y="${cy - 14}">${esc(m.txt)}</text>` : '') + '</g>';
+    }
     // "+" nas portas sem ambiente do outro lado
     if (o.mais) {
       for (const g of lay.portas) {

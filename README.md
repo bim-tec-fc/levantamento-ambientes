@@ -8,6 +8,13 @@ Responsável: Melqui Domingos, Núcleo BIM.
 
 ## O que faz
 
+### Gestos na planta (v1.3.1)
+
+A planta funciona como uma folha na prancheta: **um toque curto** marca o ponto (canto do desenho,
+calibração, marcador) exatamente onde o dedo encostou, e arrastar com um dedo não move a folha.
+**Dois dedos** movem e aproximam/afastam. Um dedo só arrasta o ambiente que já está selecionado.
+No computador: arrastar com o mouse move a planta e a roda aproxima.
+
 ### Planta de fundo, marcadores e status (v1.3)
 
 - **Planta de fundo:** carregue a planta existente como imagem (JPG ou PNG; para PDF, exporte a página
@@ -28,8 +35,10 @@ e as paredes são chamadas pelos cantos (parede A–B).
 - **Retângulo:** informe comprimento (A–B) e largura (B–C).
 - **Forma livre (paredes fora do esquadro):** toque em **Desenhar parede a parede**, depois no canto A
   e em cada canto seguinte. A medida e o ângulo vêm do toque; ajuste os valores exatos nos campos.
-  O desenho usa esquadro: se a parede nova estiver até 30° do esquadro com a anterior, ela fica a 90°;
-  o canto também se alinha com os cantos já marcados (inclusive o A), para a última parede fechar reta.
+  O desenho usa esquadro: a 1ª parede fica na horizontal ou na vertical e cada parede seguinte vira 90°
+  para o lado do toque. Parede inclinada: digite o ângulo no campo depois. O canto também se alinha com
+  os cantos já marcados (inclusive o A), para a última parede fechar reta. No computador, uma mira mostra
+  onde o próximo canto vai cair antes do clique.
   O ângulo é o **interno**, entre a parede anterior e a nova (90 = esquadro, 270 = canto de um "L").
   Pode marcar os cantos em qualquer sentido. A última parede fecha sozinha; se ela foi medida,
   informe em **Medidas** e a ferramenta avisa se o desenho não fecha.

@@ -244,6 +244,15 @@ svg.d3 polygon{stroke:var(--fc-ink);stroke-width:.6;stroke-opacity:.55;stroke-li
 
 /* ═══ Desenho parede a parede ═══ */
 svg.planta.desenhando{cursor:crosshair}
+.pl-mira-linha{stroke:var(--fc-primary);stroke-width:2;stroke-dasharray:6 4;pointer-events:none}
+.pl-mira{pointer-events:none}
+.pl-mira circle{fill:none;stroke:var(--fc-primary);stroke-width:2}
+.pl-mira path{stroke:var(--fc-primary);stroke-width:1.6}
+.pl-mira text{fill:var(--fc-primary);font-size:13px;font-weight:700;paint-order:stroke;stroke:var(--fc-surface);stroke-width:3px}
+.pl-mira.fecha circle{fill:rgba(207,16,48,.15)}
+.pl-mira.erro circle,.pl-mira.erro path,.pl-mira-linha.erro{stroke:var(--fc-muted)}
+.pl-painel.fixo{height:min(42vh,340px);max-height:none}
+.dz-gesto{display:block;margin-top:4px;color:var(--fc-ink-soft);font-size:12px}
 .dz-linha{display:grid;grid-template-columns:44px 1fr 1fr;gap:8px;align-items:end;padding-bottom:6px;border-bottom:1px dashed var(--fc-border)}
 .dz-par{font-family:var(--fc-cond);font-weight:700;font-size:15px;color:var(--fc-red-text);padding-bottom:12px}
 .dz-linha .dica{font-size:11px}
