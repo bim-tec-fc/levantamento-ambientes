@@ -182,6 +182,78 @@
   }
   const ptW = (W, s, off = 0) => [W.a[0] + W.d[0] * s + W.nIn[0] * off, W.a[1] + W.d[1] * s + W.nIn[1] * off];
 
+  /** Distância de P ao contorno do polígono, positiva dentro e negativa fora. */
+  function distContorno(verts, x, y) {
+    let dentro = false, d2 = Infinity;
+    for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+      const a = verts[i], b = verts[j];
+      if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) dentro = !dentro;
+      const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+      let t = L2 ? ((x - a[0]) * dx + (y - a[1]) * dy) / L2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      const ex = a[0] + t * dx - x, ey = a[1] + t * dy - y;
+      d2 = Math.min(d2, ex * ex + ey * ey);
+    }
+    return (dentro ? 1 : -1) * Math.sqrt(d2);
+  }
+
+  /**
+   * Ponto do ambiente mais longe das paredes (centro do maior círculo que cabe dentro).
+   * Num "L" ou num formato irregular fica no meio da parte mais folgada, nunca em cima de parede.
+   * Busca por células que se dividem (como o "polylabel"), com precisão de ~1 cm.
+   */
+  function poloInterno(verts) {
+    const xs = verts.map(p => p[0]), ys = verts.map(p => p[1]);
+    const x0 = Math.min(...xs), y0 = Math.min(...ys), x1 = Math.max(...xs), y1 = Math.max(...ys);
+    const lado = Math.min(x1 - x0, y1 - y0);
+    if (!(lado > 0)) return { p: [(x0 + x1) / 2, (y0 + y1) / 2], r: 0 };
+    const celula = (x, y, h) => { const d = distContorno(verts, x, y); return { x, y, h, d, max: d + h * Math.SQRT2 }; };
+    const fila = [];
+    for (let x = x0; x < x1; x += lado) for (let y = y0; y < y1; y += lado) fila.push(celula(x + lado / 2, y + lado / 2, lado / 2));
+    // começa pelo centro de massa (bom palpite para formas simples)
+    let A = 0, cx = 0, cy = 0;
+    for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+      const a = verts[i], b = verts[j], f = a[0] * b[1] - b[0] * a[1];
+      cx += (a[0] + b[0]) * f; cy += (a[1] + b[1]) * f; A += f * 3;
+    }
+    let melhor = A ? celula(cx / A, cy / A, 0) : celula((x0 + x1) / 2, (y0 + y1) / 2, 0);
+    const meio = celula((x0 + x1) / 2, (y0 + y1) / 2, 0);
+    if (meio.d > melhor.d) melhor = meio;
+    let voltas = 0;
+    while (fila.length && voltas++ < 4000) {
+      let k = 0;
+      for (let i = 1; i < fila.length; i++) if (fila[i].max > fila[k].max) k = i;
+      const c = fila.splice(k, 1)[0];
+      if (c.d > melhor.d) melhor = c;
+      if (c.max - melhor.d <= 0.01) continue;
+      const h = c.h / 2;
+      fila.push(celula(c.x - h, c.y - h, h), celula(c.x + h, c.y - h, h), celula(c.x - h, c.y + h, h), celula(c.x + h, c.y + h, h));
+    }
+    return { p: [melhor.x, melhor.y], r: Math.max(0, melhor.d) };
+  }
+
+  /** Quanto o ambiente tem livre a partir de P na direção u (até a primeira parede). */
+  function livre(verts, P, u) {
+    let t = Infinity;
+    for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+      const a = verts[j], e = sub(verts[i], a), den = u[0] * e[1] - u[1] * e[0];
+      if (Math.abs(den) < 1e-12) continue;
+      const w = sub(a, P), s = (w[0] * e[1] - w[1] * e[0]) / den, q = (w[0] * u[1] - w[1] * u[0]) / den;
+      if (s > 1e-9 && q >= -1e-9 && q <= 1 + 1e-9) t = Math.min(t, s);
+    }
+    return t;
+  }
+  /** Meia largura livre na horizontal, olhando as alturas y−dy, y e y+dy (onde vão as linhas do texto). */
+  function meiaLarguraLivre(verts, P, dy) {
+    let m = Infinity;
+    for (const y of dy > 0 ? [P[1] - dy, P[1], P[1] + dy] : [P[1]]) {
+      const Q = [P[0], y];
+      if (distContorno(verts, Q[0], Q[1]) <= 0) return 0;
+      m = Math.min(m, livre(verts, Q, [1, 0]), livre(verts, Q, [-1, 0]));
+    }
+    return m;
+  }
+
   /** Coloca o ambiente na planta: rotação r (rad) e posição t do canto A. */
   function colocar(a, r, t) {
     const f = formaLocal(a);
@@ -195,6 +267,11 @@
       id: a.id, a, rot: r, t, verts, walls, fechado: f.fechado, local: f,
       nivel: nivelDe(a), pd: pdDe(a), area: ap.area, perim: ap.perim,
       centro: verts.length ? [cx / verts.length, cy / verts.length] : t,
+      // ponto do nome e do código: calculado só quando alguém pede (o arraste chama colocar muitas vezes)
+      get rotulo() {
+        if (!this._rotulo) this._rotulo = f.fechado && verts.length >= 3 ? poloInterno(verts) : { p: this.centro, r: 0 };
+        return this._rotulo;
+      },
       bbox: { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) },
       paraMundo: p => add(rotv(p, r), t),
       paraLocal: p => rotv(sub(p, t), -r),
@@ -654,17 +731,39 @@
         `<line x1="${X(pt.px)}" y1="${Y(pt.py)}" x2="${X(pt.cx)}" y2="${Y(pt.cy)}"/>` +
         `<circle cx="${X(pt.cx)}" cy="${Y(pt.cy)}" r="${rr}"/><text x="${X(pt.cx)}" y="${Y(pt.cy) + 3.5}" text-anchor="middle">${esc(pt.cod)}</text></g>`;
     }
-    // textos dos ambientes
+    // textos dos ambientes: no ponto mais folgado (longe das paredes), só as linhas que cabem
     for (const [id, R] of lay.pos) {
-      if (!R.fechado) continue;
-      const a = R.a, wpx = (R.bbox.x1 - R.bbox.x0) * s, hpx = (R.bbox.y1 - R.bbox.y0) * s;
-      if (wpx < 34 || hpx < 22) continue;
-      const cx = X(R.centro[0]), cy = Y(R.centro[1]);
-      const t = [`<tspan class="pl-cod">${esc(a.codigo || '')}</tspan>`];
-      if (a.nome && wpx > 70) t.push(`<tspan x="${cx}" dy="14" class="pl-nome">${esc(cortar(a.nome, Math.floor(wpx / 7)))}</tspan>`);
-      if (hpx > 46 && R.area != null) t.push(`<tspan x="${cx}" dy="13" class="pl-area">${fmt(R.area)} m²</tspan>`);
-      if (hpx > 60 && R.nivel) t.push(`<tspan x="${cx}" dy="13" class="pl-nv">NV ${fmtNivel(R.nivel)}</tspan>`);
-      out += `<text class="pl-txt" x="${cx}" y="${cy - (t.length - 1) * 6.5}" text-anchor="middle">${t.join('')}</text>`;
+      if (!R.fechado || R.verts.length < 3) continue;
+      const a = R.a, ro = R.rotulo, P0 = ro.p;
+      const altLivre = Math.min(livre(R.verts, P0, [0, 1]), livre(R.verts, P0, [0, -1])) * s;   // px, do ponto até a parede
+      const cod = ['cod', a.codigo || '', 15, 8.5], area = R.area != null ? ['area', `${fmt(R.area)} m²`, 13, 6.2] : null;
+      const nv = R.nivel ? ['nv', `NV ${fmtNivel(R.nivel)}`, 13, 6.2] : null;
+      // opções da mais completa para a mais enxuta: o nome pode quebrar em até 2 linhas
+      const opcoes = [[2, true, true], [2, true, false], [1, true, false], [1, false, false], [0, false, false]];
+      let vis = null;
+      for (const [nNome, comArea, comNv] of opcoes) {
+        if (nNome && !a.nome) continue;
+        const hMax = cod[2] + nNome * 14 + (comArea && area ? 13 : 0) + (comNv && nv ? 13 : 0);
+        if (hMax / 2 + 3 > altLivre) continue;
+        const larg = (meiaLarguraLivre(R.verts, P0, hMax / 2 / s) * s - 4) * 2;
+        if (larg < cod[1].length * cod[3]) continue;
+        const ls = [cod];
+        if (nNome) {
+          const q = quebrarTexto(a.nome, Math.floor(larg / 6.6), nNome);
+          if (!q) continue;                                     // nem 4 letras cabem: tenta sem o nome
+          for (const l of q) ls.push(['nome', l, 14, 6.6]);
+        }
+        if (comArea && area) ls.push(area);
+        if (comNv && nv) ls.push(nv);
+        vis = ls;
+        break;
+      }
+      if (!vis) continue;
+      const hpx = vis.reduce((m, l) => m + l[2], 0);
+      const cx = X(P0[0]), y0 = Y(P0[1]) - hpx / 2 + vis[0][2] - 3;
+      const cls = { cod: 'pl-cod', nome: 'pl-nome', area: 'pl-area', nv: 'pl-nv' };
+      const t = vis.map(([k, txt, alt], i) => `<tspan class="${cls[k]}"${i ? ` x="${cx}" dy="${alt}"` : ''}>${esc(txt)}</tspan>`);
+      out += `<text class="pl-txt" x="${cx}" y="${+y0.toFixed(1)}" text-anchor="middle">${t.join('')}</text>`;
     }
     // cantos com letras e medidas das paredes (ambiente selecionado ou em desenho)
     const marcar = o.cantos || o.desenho || (!it && o.sel);
@@ -728,6 +827,22 @@
     return out;
   }
   const cortar = (s, n) => s.length > n ? s.slice(0, Math.max(3, n - 1)) + '…' : s;
+  /** Quebra o texto por palavras em até maxLinhas de até n letras (a última é cortada com "…"). Null se nem 4 letras cabem. */
+  function quebrarTexto(txt, n, maxLinhas) {
+    if (n < 4) return null;
+    const pal = txt.trim().split(/\s+/), out = [];
+    let lin = '';
+    while (pal.length) {
+      const p = pal[0], tent = lin ? lin + ' ' + p : p;
+      if (tent.length <= n) { lin = tent; pal.shift(); continue; }
+      if (!lin) { lin = p; pal.shift(); }                       // palavra maior que a linha: vai cortada
+      if (out.length === maxLinhas - 1) break;
+      out.push(lin); lin = '';
+    }
+    const resto = [lin, ...pal].filter(Boolean).join(' ');
+    if (resto) out.push(resto);
+    return out.filter(Boolean).map((l, i, v) => i === v.length - 1 || l.length > n ? cortar(l, n) : l);
+  }
 
   /** Cota da boneca: do canto até o batente, por dentro do ambiente. lado = 'A' | 'B'. */
   function cotaBoneca(lay, portaId, lado, txt) {
@@ -810,7 +925,7 @@
       }
       for (const [, R] of lay.pos) {
         if (!R.fechado) continue;
-        const a = R.a, cx = R.centro[0] + dx, cy = R.centro[1];
+        const a = R.a, cx = R.rotulo.p[0] + dx, cy = R.rotulo.p[1];
         texto('TEXTOS', cx, cy + 0.25, 0.2, a.codigo || '');
         if (a.nome) texto('TEXTOS', cx, cy, 0.15, a.nome);
         if (R.area != null) texto('TEXTOS', cx, cy - 0.25, 0.12, `${fmt(R.area)} m2`);

@@ -8,6 +8,17 @@ Responsável: Melqui Domingos, Núcleo BIM.
 
 ## O que faz
 
+### Melhorias de uso (v1.4)
+
+- **Excluir levantamento:** botão de lixeira em cada levantamento da lista (e em Dados). Uma janela
+  pede confirmação, mostra quantos ambientes e fotos serão apagados e avisa se ele ainda não foi exportado.
+- **Nome e código no lugar mais folgado:** o texto do ambiente fica no ponto mais longe das paredes
+  (num "L", no meio da parte mais larga), nunca em cima de parede. O nome quebra em até duas linhas e
+  só aparece o que cabe; aproxime a planta para ver o resto. O DXF usa o mesmo ponto.
+- **Desenhar primeiro, corrigir depois:** durante o desenho parede a parede não aparecem campos.
+  Depois de fechar, toque numa parede para corrigir o comprimento e, nos ambientes desenhados, o
+  ângulo do canto.
+
 ### Gestos na planta (v1.3.1)
 
 A planta funciona como uma folha na prancheta: **um toque curto** marca o ponto (canto do desenho,
@@ -36,7 +47,7 @@ e as paredes são chamadas pelos cantos (parede A–B).
 - **Forma livre (paredes fora do esquadro):** toque em **Desenhar parede a parede**, depois no canto A
   e em cada canto seguinte. A medida e o ângulo vêm do toque; ajuste os valores exatos nos campos.
   O desenho usa esquadro: a 1ª parede fica na horizontal ou na vertical e cada parede seguinte vira 90°
-  para o lado do toque. Parede inclinada: digite o ângulo no campo depois. O canto também se alinha com
+  para o lado do toque. Medidas e ângulos diferentes: depois de fechar, toque na parede e corrija. O canto também se alinha com
   os cantos já marcados (inclusive o A), para a última parede fechar reta. No computador, uma mira mostra
   onde o próximo canto vai cair antes do clique.
   O ângulo é o **interno**, entre a parede anterior e a nova (90 = esquadro, 270 = canto de um "L").

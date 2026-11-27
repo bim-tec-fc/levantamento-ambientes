@@ -8,7 +8,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 'use strict';
 
-const VERSAO = '1.3.1';
+const VERSAO = '1.4.0';
 const FORMATO_BACKUP = 'fc-levantamento-ambientes';
 
 // ───────────────────────── Listas padrão ─────────────────────────
@@ -404,19 +404,53 @@ function aoEditar(path) {
   if (ctx.amb) atualizarAmb();
 }
 
+const ICONE_LIXEIRA = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+/**
+ * Janela de confirmação (no lugar do confirm do navegador).
+ * Devolve true só se a pessoa tocar no botão de confirmar.
+ */
+function confirmar({ titulo, texto, ok = 'Excluir', perigo = true }) {
+  return new Promise(resolve => {
+    const fundo = document.createElement('div');
+    fundo.className = 'conf-fundo';
+    fundo.innerHTML = `<div class="conf card" role="alertdialog" aria-modal="true" aria-labelledby="conf-t" aria-describedby="conf-x">
+        <div id="conf-t" class="conf-t">${h(titulo)}</div>
+        <div id="conf-x" class="conf-x">${texto}</div>
+        <div class="conf-acoes">
+          <button type="button" class="btn btn-ghost" data-conf="nao">Cancelar</button>
+          <button type="button" class="btn ${perigo ? 'btn-perigo' : 'btn-primary'}" data-conf="sim">${h(ok)}</button>
+        </div>
+      </div>`;
+    const fechar = sim => { document.removeEventListener('keydown', tecla, true); fundo.remove(); resolve(sim); };
+    const tecla = e => { if (e.key === 'Escape') { e.preventDefault(); fechar(false); } };
+    fundo.addEventListener('click', e => {
+      const b = e.target.closest('[data-conf]');
+      if (b) fechar(b.dataset.conf === 'sim');
+      else if (e.target === fundo) fechar(false);
+    });
+    document.addEventListener('keydown', tecla, true);
+    document.body.appendChild(fundo);
+    fundo.querySelector('[data-conf="nao"]').focus();
+  });
+}
+
 // ───────────────────────── Tela: início ─────────────────────────
 async function telaInicio() {
   const levs = (await db.todos()).map(normalizar).sort((a, b) => (b.atualizadoEm || 0) - (a.atualizadoEm || 0));
   const lista = levs.length ? levs.map(L => {
     const pend = !L.ultimaExportacao || L.atualizadoEm > L.ultimaExportacao;
-    return `<a class="card item" href="#/l/${h(L.id)}">
-      <div class="item-c">
-        <div class="item-t">${h(L.filial || 'Levantamento sem nome')}</div>
-        <div class="item-s">${h(dataBR(L.data))}${L.responsavel ? ' · ' + h(L.responsavel) : ''}</div>
-        <div class="item-s num">${L.ambientes.length} ambiente(s) · ${fmt(somaArea(L.ambientes))} m²</div>
-      </div>
-      <span class="farol ${pend ? 'a' : 'g'}">${pend ? 'Não exportado' : 'Exportado'}</span>
-    </a>`;
+    return `<div class="card item lev-item">
+      <a class="lev-link" href="#/l/${h(L.id)}">
+        <div class="item-c">
+          <div class="item-t">${h(L.filial || 'Levantamento sem nome')}</div>
+          <div class="item-s">${h(dataBR(L.data))}${L.responsavel ? ' · ' + h(L.responsavel) : ''}</div>
+          <div class="item-s num">${L.ambientes.length} ambiente(s) · ${fmt(somaArea(L.ambientes))} m²</div>
+        </div>
+        <span class="farol ${pend ? 'a' : 'g'}">${pend ? 'Não exportado' : 'Exportado'}</span>
+      </a>
+      <button class="btn btn-ghost icone perigo lev-del" data-acao="del-lev" data-id="${h(L.id)}" aria-label="Excluir ${h(L.filial || 'levantamento sem nome')}">${ICONE_LIXEIRA}</button>
+    </div>`;
   }).join('') : `<div class="card vazio">Nenhum levantamento neste aparelho ainda.<br>Toque em <b>Novo levantamento</b> para começar.</div>`;
 
   const tema = ls.get('tema', 'auto');
@@ -810,9 +844,6 @@ function desenharPlanta() {
   const L = ctx.lev, el = $('#planta');
   if (!L || !el) return;
   const pav = pavAtual(L);
-  // painel de altura fixa no desenho (antes de medir a área): a planta não muda de tamanho a cada toque
-  const pn = $('#pl-painel');
-  if (pn) pn.classList.toggle('fixo', !!ctx.desenho);
   const lay = Planta.layout(L, pav);
   if (ctx.sel && !lay.pos.has(ctx.sel) && !lay.marcadores.some(m => m.id === ctx.sel)) { ctx.sel = null; ctx.item = null; }
   if (ctx.item && !Planta.infoItem(lay, ctx.item)) ctx.item = null;
@@ -940,8 +971,10 @@ function painelItem(lay) {
       ? (fechamento ? 'Parede de fechamento: é calculada pelas outras. Para mudar, ajuste as outras paredes ou os ângulos.' : 'Parede inteira: mudar aqui muda a medida do ambiente.')
       : !info.vE || !info.vD ? `Do canto até a ${ab.g.janela ? 'janela' : 'porta'} (a boneca): mudar aqui ${ab.lado === 'A' ? 'move a abertura' : 'move este ambiente'}.`
         : 'Trecho entre duas aberturas.';
+    const angulo = a.forma === 'poli' && !fechamento && it.k >= 1 && a.paredes[it.k]
+      ? campoPe(`Ângulo no canto ${letra(it.k)} (graus)`, 'ang', a.paredes[it.k].ang, { dica: 'interno, entre a parede anterior e esta; 90 = esquadro, 270 = canto de "L"' }) : '';
     return `<div class="pl-sel"><div class="pl-sel-t">Parede ${nomeParede(a, it.k)} de <b class="num">${h(a.codigo)}</b></div></div>
-      ${campoPe('Comprimento deste trecho (m)', 'trecho', vexib(vv.trecho), { dica: desc, extra: fechamento && !ab ? 'readonly' : '' })}
+      ${angulo ? `<div class="grid2">` : ''}${campoPe('Comprimento deste trecho (m)', 'trecho', vexib(vv.trecho), { dica: angulo ? '' : desc, extra: fechamento && !ab ? 'readonly' : '' })}${angulo ? `${angulo}</div><p class="dica">${desc}</p>` : ''}
       <span class="fc-label">Inserir neste ponto da parede</span>
       <div class="pl-acoes g4">
         <button class="btn btn-primary" data-acao="ins" data-v="porta">Porta</button>
@@ -1044,6 +1077,18 @@ function aplicarPe(k, val) {
       o.cx = r2((num(o.cx) || 0) + local[0]);
       o.cy = r2((num(o.cy) || 0) + local[1]);
     } else if (['w', 'd', 'h', 'nivel', 'rot'].includes(k)) o[k] = val;
+  } else if (it.tipo === 'seg' && k === 'ang') {
+    // ângulo do canto inicial da parede (ambiente desenhado): espera um valor plausível antes de aplicar
+    const a = ambPorId(L, it.amb), pa = a && a.paredes[it.k];
+    if (!pa || v == null || v < 20 || v > 340) return;
+    const antes = retrato(L, a), velho = pa.ang, posVelha = { ...a.pos };
+    pa.ang = val;
+    if (antes && manterCanto(L, a, antes, 'auto') < 0) {
+      pa.ang = velho;
+      a.pos = posVelha;
+      return toast('Com esse ângulo o ambiente ficaria por cima de outro. Mova-o antes ou ajuste o valor.', 4500);
+    }
+    manterConteudo(L, a, antes);
   } else if (it.tipo === 'seg') {
     if (v == null || v < 0) return;
     const a = ambPorId(L, it.amb), { vE, vD, W } = info;
@@ -1206,23 +1251,15 @@ function iniciarDesenho({ porta = null, nome = '', ladoPorta = '', bonecaB = '',
 function painelDesenho() {
   const L = ctx.lev, a = ambPorId(L, ctx.desenho.amb);
   if (!a) { ctx.desenho = null; return ''; }
-  const ps = a.paredes, n = ps.length;
+  const n = a.paredes.length;
   const dica = !a.pos && !a.ancora ? 'Toque na planta onde fica o <b>canto A</b>.'
-    : n === 0 ? 'Toque no <b>canto B</b> (a parede fica na horizontal ou na vertical). Depois ajuste a medida.'
-      : `Toque no próximo canto (<b>${letra(n + 1)}</b>): a parede vira 90° para o lado do toque. Ou toque em <b>Fechar</b> quando faltar só a última parede.`;
-  const dicaGesto = '<span class="dz-gesto">Um toque curto marca o canto. Mover e aproximar: dois dedos.</span>';
-  const linhas = ps.map((p, k) => `<div class="dz-linha">
-      <span class="dz-par num">${letra(k)}–${letra(k + 1)}</span>
-      ${campoPe('Comprimento (m)', `c:${k}`, p.c, { attr: 'data-dz' })}
-      ${k === 0
-        ? (a.ancora ? '<div class="field"><span class="fc-label">Direção</span><span class="dica">a da porta</span></div>'
-          : campoPe('Direção (graus)', 'rot', a.rot, { attr: 'data-dz', dica: '0 = para a direita; parede inclinada: digite' }))
-        : campoPe(`Ângulo em ${letra(k)} (graus)`, `ang:${k}`, p.ang, { attr: 'data-dz', dica: 'interno; 90 = esquadro; outro: digite' })}
-    </div>`).join('');
-  return `<div class="pl-sel"><div class="pl-sel-t">Desenhando <b class="num">${h(a.codigo)}</b></div><div class="pl-sel-s">${dica} ${dicaGesto}</div></div>
-    ${campoPe('Nome do ambiente', 'nome', a.nome, { numero: false, attr: 'data-dz', extra: 'placeholder="Ex.: Recepção" autocapitalize="sentences"' })}
-    ${linhas}
-    ${n >= 2 ? `<p class="dica">A última parede (${letra(n)}–A) é calculada ao fechar.</p>` : ''}
+    : n === 0 ? 'Toque no <b>canto B</b>: a parede fica na horizontal ou na vertical.'
+      : n === 1 ? `Toque no <b>canto ${letra(2)}</b>: a parede vira 90° para o lado do toque.`
+        : `Toque no <b>canto ${letra(n + 1)}</b>, ou no canto A (ou em <b>Fechar</b>) para fechar o ambiente.`;
+  const nome = a.nome ? ` ${h(a.nome)}` : '';
+  return `<div class="pl-sel"><div class="pl-sel-t">Desenhando <b class="num">${h(a.codigo)}</b>${nome}${n ? ` <span class="dz-cont">· ${n} parede${n > 1 ? 's' : ''}</span>` : ''}</div>
+      <div class="pl-sel-s">${dica}</div>
+      <span class="dz-gesto">Um toque curto marca o canto; dois dedos movem e aproximam. Medidas e ângulos você corrige depois, tocando em cada parede.</span></div>
     <div class="pl-acoes g3">
       <button class="btn btn-ghost" data-acao="dz-desfazer"${n === 0 && !a.pos ? ' disabled' : ''}>Desfazer</button>
       <button class="btn btn-ghost perigo" data-acao="dz-cancelar">Cancelar</button>
@@ -1294,8 +1331,6 @@ function tocarDesenho(ev) {
   }
   salvarDepois();
   desenharPlanta();
-  const ult = $$('#pl-painel [data-dz^="c:"]').pop();
-  if (ult) ult.scrollIntoView({ block: 'nearest' });
 }
 
 /** Prévia do próximo canto (mouse parado sobre a planta ou dedo encostado). */
@@ -1337,7 +1372,7 @@ function fecharDesenho() {
   desenharPlanta();
   const R = Planta.layout(L, pavAtual(L)).pos.get(a.id);
   const W = R && R.walls[R.walls.length - 1];
-  if (W) toast(`Ambiente fechado. A última parede (${letra(W.k)}–A) ficou com ${fmt(W.len)} m. Se você mediu, informe em Medidas para conferir.`, 6000);
+  if (W) toast(`Ambiente fechado. Para corrigir uma medida ou um ângulo, toque na parede. A última (${letra(W.k)}–A) ficou com ${fmt(W.len)} m e é calculada pelas outras.`, 6500);
 }
 
 async function cancelarDesenho() {
@@ -2711,14 +2746,24 @@ async function acao(nome, b) {
       break;
     }
     case 'del-lev': {
-      if (!confirm(`Excluir "${L.filial || 'Sem nome'}" e todas as fotos deste aparelho?\n\nIsso não pode ser desfeito.`)) return;
-      clearTimeout(timerSalvar);
-      timerSalvar = null;
-      await apagarFotos((await db.fotosDoLev(L.id)).map(f => f.id));
-      await db.del(L.id);
-      ctx.lev = null;
-      location.hash = '#/';
+      // da lista (data-id) ou da tela Dados do levantamento aberto
+      const alvo = id ? await db.get(id) : L;
+      if (!alvo) return;
+      const Lx = normalizar(alvo), fotos = await db.fotosDoLev(Lx.id);
+      const pend = !Lx.ultimaExportacao || Lx.atualizadoEm > Lx.ultimaExportacao;
+      const sim = await confirmar({
+        titulo: 'Excluir levantamento',
+        texto: `<p><b>${h(Lx.filial || 'Levantamento sem nome')}</b>: ${Lx.ambientes.length} ambiente(s) e ${fotos.length} foto(s).</p>` +
+          (pend ? '<p class="conf-alerta">Este levantamento ainda não foi exportado. Gere a planilha e o backup antes se precisar dos dados.</p>' : '') +
+          '<p>Tudo será apagado deste aparelho. Isso não pode ser desfeito.</p>',
+      });
+      if (!sim) return;
+      if (ctx.lev && ctx.lev.id === Lx.id) { clearTimeout(timerSalvar); timerSalvar = null; ctx.lev = null; }
+      await apagarFotos(fotos.map(f => f.id));
+      await db.del(Lx.id);
       toast('Levantamento excluído.');
+      if (location.hash === '#/' || location.hash === '') await telaInicio();
+      else location.hash = '#/';
       break;
     }
 
