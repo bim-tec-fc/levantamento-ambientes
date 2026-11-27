@@ -160,9 +160,6 @@ select.input{padding-right:8px}
 body.modo-planta #app{display:flex;flex-direction:column;height:100vh;height:100dvh}
 .planta-area{position:relative;flex:1;min-height:0;background:var(--fc-bg);overflow:hidden}
 svg.planta{display:block;width:100%;height:100%;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab}
-.pl-pavs{position:absolute;top:8px;left:8px;right:64px;z-index:2}
-.pl-zoom{position:absolute;right:8px;top:8px;display:flex;flex-direction:column;gap:6px;z-index:2}
-.pl-zoom .btn{background:var(--fc-surface);box-shadow:var(--fc-shadow)}
 .pl-painel{flex-shrink:0;max-height:46vh;overflow:auto;background:var(--fc-surface);border-top:1px solid var(--fc-border);box-shadow:var(--fc-shadow-pop);padding:12px 16px calc(12px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:10px}
 .pl-painel:empty{display:none}
 .pl-painel .alerta{margin:0}
@@ -204,7 +201,7 @@ svg.planta{display:block;width:100%;height:100%;touch-action:none;user-select:no
 .dl-corpo{flex:1;overflow:auto;padding:14px 16px calc(24px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:12px;max-width:760px;width:100%;margin:0 auto}
 .dl-corpo .seg .chip{font-size:13px;padding:8px 12px}
 .sep{border:none;border-top:1px dashed var(--fc-border);margin:4px 0}
-body.modo-planta .toast{bottom:auto;top:calc(130px + env(safe-area-inset-top))}
+body.modo-planta .toast{bottom:auto;top:calc(62px + env(safe-area-inset-top))}
 
 /* ═══ v1.2: seleção, aberturas, pontos, objetos, 3D ═══ */
 .pl-acoes.g4{grid-template-columns:repeat(4,1fr)} .pl-acoes.g3{grid-template-columns:repeat(3,1fr)} .pl-acoes.g2{grid-template-columns:repeat(2,1fr)}
@@ -212,7 +209,6 @@ body.modo-planta .toast{bottom:auto;top:calc(130px + env(safe-area-inset-top))}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .pl-painel .field{gap:4px}
 .pl-painel .input{height:42px}
-.pl-zoom .pl-3d{font-family:var(--fc-cond);font-weight:700;font-size:15px}
 .pl-escolha .chip{font-size:13px;min-height:38px;padding:6px 12px}
 .pl-biblio{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px}
 .bib{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;background:var(--fc-field);border:1px solid var(--fc-border);border-radius:var(--fc-r-sm);cursor:pointer;font-size:12px;line-height:1.2;text-align:center}
@@ -266,7 +262,6 @@ svg.planta.desenhando{cursor:crosshair}
 .pl-mira text{fill:var(--fc-primary);font-size:13px;font-weight:700;paint-order:stroke;stroke:var(--fc-surface);stroke-width:3px}
 .pl-mira.fecha circle{fill:rgba(207,16,48,.15)}
 .pl-mira.erro circle,.pl-mira.erro path,.pl-mira-linha.erro{stroke:var(--fc-muted)}
-.dz-gesto{display:block;margin-top:4px;color:var(--fc-ink-soft);font-size:12px}
 .dz-linha{display:grid;grid-template-columns:44px 1fr 1fr;gap:8px;align-items:end;padding-bottom:6px;border-bottom:1px dashed var(--fc-border)}
 .dz-par{font-family:var(--fc-cond);font-weight:700;font-size:15px;color:var(--fc-red-text);padding-bottom:12px}
 .dz-linha .dica{font-size:11px}
@@ -306,4 +301,40 @@ svg.d3 polygon.d3-parede:not(.d3-topo){stroke-opacity:.18}
 .st-chips .chip.st-novo.on{background:var(--fc-info)} .st-chips .chip.st-demolido.on{background:var(--fc-muted)}
 .st-chips .chip.st-levantar.on{background:var(--fc-ink-soft)}
 .btn.ativo{border-color:var(--fc-primary);color:var(--fc-red-text)}
-.pl-zoom{max-height:calc(100% - 16px);overflow:auto}
+
+
+/* ── Prancheta em tela cheia (v1.5): barra fina, Menu e Ferramentas ── */
+body.modo-planta .tb-in{padding:4px 8px 4px 12px;gap:6px}
+body.modo-planta .tb .fc-brand{display:none}
+body.modo-planta .tb .fc-title{font-size:18px}
+body.modo-planta .voltar{width:38px;height:38px;margin-left:-6px}
+.tb-menu{height:38px;padding:0 10px;gap:6px;font-size:13px;flex-shrink:0}
+.pl-fab{position:absolute;right:12px;bottom:12px;z-index:3;display:inline-flex;align-items:center;gap:8px;height:48px;padding:0 16px 0 14px;border:0;border-radius:var(--fc-r-full);background:var(--fc-primary);color:#fff;font-family:var(--fc-cond);font-weight:700;font-size:15px;letter-spacing:.04em;text-transform:uppercase;box-shadow:var(--fc-shadow-pop);cursor:pointer}
+.pl-fab:active{background:var(--fc-primary-hover)}
+.pl-fab-n{position:absolute;top:-6px;right:-4px;min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:var(--fc-warning);color:#272525;font-size:12px;line-height:22px;text-align:center}
+.pl-pav-tag{position:absolute;top:8px;left:8px;z-index:3;height:30px;padding:0 12px;border:1px solid var(--fc-border);border-radius:var(--fc-r-full);background:var(--fc-surface);color:var(--fc-ink);font-family:var(--fc-cond);font-weight:600;font-size:13px;text-transform:uppercase;box-shadow:var(--fc-shadow)}
+.pl-vazia{position:absolute;left:24px;right:24px;top:38%;z-index:2;text-align:center;font-size:15px;line-height:1.45;color:var(--fc-ink-soft);pointer-events:none}
+/* painel de baixo compacto */
+.pl-painel{position:relative;padding:10px 12px calc(10px + env(safe-area-inset-bottom));gap:8px;max-height:44vh}
+.pl-painel .btn{height:40px;font-size:13px}
+.pl-x{position:absolute;top:4px;right:6px;width:36px;height:36px;border:0;background:none;color:var(--fc-ink-soft);font-size:26px;line-height:1;cursor:pointer;z-index:1}
+.pl-painel .pl-sel{padding-right:34px}
+.pl-st{border:0;cursor:pointer;margin-left:6px;vertical-align:middle}
+.pl-mais{align-self:flex-start;border:0;background:none;padding:2px 0;color:var(--fc-red-text);font-family:var(--fc-cond);font-weight:600;font-size:13px;letter-spacing:.04em;text-transform:uppercase;cursor:pointer}
+.pl-mais::after{content:" ▾"} .pl-mais.aberto::after{content:" ▴"}
+/* folha (Menu e Ferramentas) */
+.folha-fundo{position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;justify-content:center}
+.folha{width:100%;max-width:560px;max-height:82vh;overflow:auto;background:var(--fc-surface);border-radius:16px 16px 0 0;border-top:5px solid var(--fc-primary);padding:6px 14px calc(16px + env(safe-area-inset-bottom));box-shadow:var(--fc-shadow-pop)}
+.folha-cab{display:flex;align-items:center;justify-content:space-between;position:sticky;top:-6px;background:var(--fc-surface);padding:4px 0}
+.folha-cab .btn{font-size:26px;width:40px;height:40px}
+.folha-t{font-family:var(--fc-cond);font-weight:700;font-size:19px;text-transform:uppercase;letter-spacing:.03em}
+.folha-corpo{display:flex;flex-direction:column;gap:14px}
+.folha-g{display:flex;flex-direction:column;gap:8px}
+.folha-gt{font-family:var(--fc-cond);font-weight:600;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--fc-muted);border-bottom:1px solid var(--fc-border);padding-bottom:4px}
+.folha-sub{font-size:12px;color:var(--fc-ink-soft)}
+.folha-bts{display:grid;gap:8px}
+.folha-bts.g2{grid-template-columns:repeat(2,1fr)} .folha-bts.g3{grid-template-columns:repeat(3,1fr)} .folha-bts.g4{grid-template-columns:repeat(4,1fr)}
+.folha-bts .btn{height:44px;padding:0 6px;font-size:13px;justify-content:center;text-align:center}
+.folha-dica{margin:0;font-size:12.5px;color:var(--fc-ink-soft)}
+.folha-ajuda{margin:0;padding-left:18px;font-size:13.5px;line-height:1.45;display:flex;flex-direction:column;gap:4px}
+.folha-g.avisos .alerta{margin:0}

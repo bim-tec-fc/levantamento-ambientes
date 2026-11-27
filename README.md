@@ -8,6 +8,15 @@ Responsável: Melqui Domingos, Núcleo BIM.
 
 ## O que faz
 
+### Prancheta em tela cheia (v1.5)
+
+A planta ocupa quase a tela toda. No topo fica só uma barra fina com o nome do levantamento e o botão
+**Menu** (lista de ambientes, dados e pavimentos, exportar, todos os levantamentos e a ajuda dos gestos).
+Sobre a planta, o botão **Ferramentas** reúne, por tema: avisos, **Criar ambiente** (desenhar, retângulo,
+marcador), **Vista** (enquadrar, aproximar, afastar, 3D, pavimento), **Planta de fundo** e a situação dos
+ambientes. O painel de baixo só aparece com algo selecionado ou durante uma tarefa, e fecha no **×**;
+situação (status) e portas do ambiente ficam em **Situação e portas**.
+
 ### Melhorias de uso (v1.4)
 
 - **Excluir levantamento:** botão de lixeira em cada levantamento da lista (e em Dados). Uma janela

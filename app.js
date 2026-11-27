@@ -8,7 +8,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 'use strict';
 
-const VERSAO = '1.4.0';
+const VERSAO = '1.5.0';
 const FORMATO_BACKUP = 'fc-levantamento-ambientes';
 
 // ───────────────────────── Listas padrão ─────────────────────────
@@ -331,6 +331,7 @@ window.addEventListener('hashchange', rotear);
 
 function render({ titulo, sub, voltar, corpo, rodape, abas, planta }) {
   document.body.classList.toggle('modo-planta', !!planta);
+  fecharFolha();
   $('#app').innerHTML = `
   <header class="fc-topbar tb">
     <div class="tb-in">
@@ -340,8 +341,9 @@ function render({ titulo, sub, voltar, corpo, rodape, abas, planta }) {
         <h1 class="fc-title" id="titulo">${h(titulo)}</h1>
       </div>
       <span id="salvo" class="salvo"></span>
+      ${planta ? `<button class="btn btn-ghost tb-menu" data-acao="pl-menu" aria-label="Menu do levantamento">${ICONE_MENU}<span>Menu</span></button>` : ''}
     </div>
-    ${abas || ''}
+    ${planta ? '' : abas || ''}
   </header>
   ${planta ? corpo : `<main class="wrap${rodape ? ' com-rodape' : ''}">${corpo}</main>`}
   ${rodape ? `<div class="bottombar">${rodape}</div>` : ''}`;
@@ -402,6 +404,72 @@ function aoEditar(path) {
   if (path === 'lev.filial') { const t = $('#titulo'); if (t) t.textContent = ctx.lev.filial || 'Sem nome'; }
   if (path === 'lev.responsavel') ls.set('responsavel', ctx.lev.responsavel);
   if (ctx.amb) atualizarAmb();
+}
+
+const ICONE_MENU = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>';
+const ICONE_FERR = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="16" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="10" cy="17" r="2.4" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>';
+
+/**
+ * Folha que sobe de baixo com grupos de botões (Menu e Ferramentas da prancheta).
+ * Qualquer botão ou link de dentro fecha a folha antes de agir.
+ */
+function abrirFolha(titulo, corpo) {
+  fecharFolha();
+  const f = document.createElement('div');
+  f.className = 'folha-fundo';
+  f.id = 'folha';
+  f.innerHTML = `<div class="folha" role="dialog" aria-modal="true" aria-label="${h(titulo)}">
+      <div class="folha-cab"><span class="folha-t">${h(titulo)}</span><button class="btn btn-ghost icone" data-folha="fechar" aria-label="Fechar">×</button></div>
+      <div class="folha-corpo">${corpo}</div>
+    </div>`;
+  f.addEventListener('click', e => {
+    if (e.target === f || e.target.closest('[data-folha="fechar"]') || e.target.closest('a')) fecharFolha();
+  });
+  document.body.appendChild(f);
+}
+function fecharFolha() { const f = $('#folha'); if (f) f.remove(); }
+const grupoFolha = (titulo, conteudo, cls = '') => conteudo ? `<section class="folha-g ${cls}"><div class="folha-gt">${h(titulo)}</div>${conteudo}</section>` : '';
+
+/** Menu do levantamento: navegação entre as telas (no lugar das abas, para a prancheta ficar maior). */
+function folhaMenu() {
+  const L = ctx.lev, base = `#/l/${L.id}`;
+  abrirFolha('Menu', grupoFolha('Levantamento', `<div class="folha-bts g2">
+      <a class="btn btn-ghost" href="${base}/ambientes">Lista de ambientes</a>
+      <a class="btn btn-ghost" href="${base}/dados">Dados e pavimentos</a>
+      <a class="btn btn-ghost" href="${base}/exportar">Exportar</a>
+      <a class="btn btn-ghost" href="#/">Todos os levantamentos</a>
+    </div>`) + grupoFolha('Gestos na prancheta', `<ul class="folha-ajuda">
+      <li><b>Um toque curto</b> seleciona ou marca o ponto (canto do desenho, calibração, marcador).</li>
+      <li><b>Dois dedos</b> movem e aproximam a planta. Um dedo sozinho não mexe a folha.</li>
+      <li><b>Arraste</b> um ambiente selecionado para movê-lo: perto de outro, ele encosta sozinho (ímã).</li>
+      <li><b>Toque numa parede</b> para corrigir a medida ou inserir porta, janela, ponto ou objeto.</li>
+    </ul>`));
+}
+
+/** Ferramentas da prancheta, agrupadas por tema. */
+function folhaFerramentas() {
+  const L = ctx.lev, pav = pavAtual(L), lay = Planta.layout(L, pav), temFundo = !!fundoDoPav(L, pav);
+  const avisos = Planta.conferir(L, pav, lay);
+  const pavs = L.pavimentos.length > 1 ? `<div class="seg">${L.pavimentos.map(p =>
+    `<button class="chip${p.id === pav ? '' : ' off'}" data-acao="pl-pav" data-id="${h(p.id)}">${h(p.nome || p.sigla)}</button>`).join('')}</div>` : '';
+  abrirFolha('Ferramentas',
+    (avisos.length ? grupoFolha('Avisos', avisos.map(x => `<div class="alerta">${h(x)}</div>`).join(''), 'avisos') : '') +
+    grupoFolha('Criar ambiente', `<div class="folha-bts g3">
+      <button class="btn btn-primary" data-acao="pl-desenhar">Desenhar</button>
+      <button class="btn btn-ghost" data-acao="pl-novo-raiz">Retângulo</button>
+      <button class="btn btn-ghost" data-acao="mc-novo">Marcador</button>
+    </div><p class="folha-dica">Desenhar: toque canto a canto. Retângulo: digite as medidas. Marcador: só a ficha, sem medir.</p>`) +
+    grupoFolha('Vista', `<div class="folha-bts g4">
+      <button class="btn btn-ghost" data-acao="pl-enquadrar">Enquadrar</button>
+      <button class="btn btn-ghost" data-acao="pl-zoom" data-v="1.3">Aproximar</button>
+      <button class="btn btn-ghost" data-acao="pl-zoom" data-v="0.77">Afastar</button>
+      <button class="btn btn-ghost" data-acao="pl-3d">3D</button>
+    </div>${pavs ? `<div class="folha-sub">Pavimento</div>${pavs}` : ''}`) +
+    grupoFolha('Planta de fundo', `<div class="folha-bts g2">
+      ${temFundo ? '<button class="btn btn-ghost" data-acao="fd-carregar">Ajustar e calibrar</button><button class="btn btn-ghost" data-acao="fd-trocar">Trocar imagem</button>'
+        : '<button class="btn btn-ghost" data-acao="fd-trocar">Carregar imagem</button><span></span>'}
+    </div>`) +
+    grupoFolha('Situação dos ambientes', htmlResumoStatus(L, pav) || '<p class="folha-dica">Nenhum ambiente ainda.</p>'));
 }
 
 const ICONE_LIXEIRA = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -795,18 +863,12 @@ function pavAtual(L) {
 
 function htmlPlanta(L) {
   const pav = pavAtual(L);
-  const chips = L.pavimentos.length > 1 ? `<div class="seg pl-pavs">${L.pavimentos.map(p =>
-    `<button class="chip${p.id === pav ? '' : ' off'}" data-acao="pl-pav" data-id="${h(p.id)}">${h(p.nome || p.sigla)}</button>`).join('')}</div>` : '';
+  const pv = L.pavimentos.find(p => p.id === pav);
   return `<main class="planta-area">
-    ${chips}
+    ${L.pavimentos.length > 1 ? `<button class="pl-pav-tag" data-acao="pl-ferr">${h(pv.nome || pv.sigla)}</button>` : ''}
     <svg id="planta" class="planta" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Planta baixa"></svg>
-    <div class="pl-zoom">
-      <button class="btn btn-ghost icone" data-acao="pl-zoom" data-v="1.3" aria-label="Aproximar">+</button>
-      <button class="btn btn-ghost icone" data-acao="pl-zoom" data-v="0.77" aria-label="Afastar">−</button>
-      <button class="btn btn-ghost icone" data-acao="pl-enquadrar" aria-label="Enquadrar a planta">${ICONE_ENQUADRAR}</button>
-      <button class="btn btn-ghost icone pl-3d" data-acao="pl-3d" aria-label="Ver em 3D">3D</button>
-      <button class="btn btn-ghost icone" data-acao="fd-carregar" aria-label="Planta de fundo"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 5h18v14H3zM3 15l5-5 4 4 3-3 6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
-    </div>
+    <div id="pl-vazia" class="pl-vazia" hidden>Prancheta vazia. Toque em <b>Ferramentas</b> para desenhar o primeiro ambiente, marcar ambientes ou carregar a planta de fundo.</div>
+    <button id="pl-fab" class="pl-fab" data-acao="pl-ferr" aria-label="Ferramentas">${ICONE_FERR}<span>Ferramentas</span><b class="pl-fab-n" hidden></b></button>
   </main>
   <div id="pl-painel" class="pl-painel"></div>`;
 }
@@ -886,69 +948,52 @@ function agendarPlanta() {
 }
 
 // ── Painel de baixo ──
-const botoesNovo = (primeiro) => `<div class="pl-acoes g2">
-    <button class="btn ${primeiro ? 'btn-primary' : 'btn-ghost'}" data-acao="pl-novo-raiz">${primeiro ? 'Retângulo' : '+ Retângulo solto'}</button>
-    <button class="btn ${primeiro ? 'btn-primary' : 'btn-ghost'}" data-acao="pl-desenhar">${primeiro ? 'Desenhar parede a parede' : '+ Desenhar solto'}</button>
-  </div>`;
 
 function painelPlanta(lay) {
   const L = ctx.lev, pav = pavAtual(L), p = $('#pl-painel');
   if (!p) return;
+  // botão Ferramentas: número de avisos; prancheta vazia: uma dica no meio
+  const avisos = lay.pos.size ? Planta.conferir(L, pav, lay) : [];
+  const n = $('#pl-fab .pl-fab-n');
+  if (n) { n.hidden = !avisos.length; n.textContent = avisos.length; }
+  const vazia = $('#pl-vazia');
+  if (vazia) vazia.hidden = !!(lay.pos.size || lay.marcadores.length || fundoDoPav(L, pav) || ctx.desenho || ctx.marcando);
+  const fechar = '<button class="pl-x" data-acao="pl-fechar-sel" aria-label="Fechar">×</button>';
   if (ctx.desenho) { p.innerHTML = painelDesenho(); return; }
   if (ctx.marcando) { p.innerHTML = painelMarcando(); return; }
   if (ctx.painelFundo || ctx.calibrar) { const html = painelFundo(); if (html) { p.innerHTML = html; return; } }
-  if (!lay.pos.size && !lay.marcadores.length) {
-    p.innerHTML = `<div class="pl-vazio">
-      <p>Se você tem a planta (imagem), carregue-a como fundo e trabalhe por cima dela. Depois, ou sem planta: desenhe os ambientes (retângulo ou parede a parede) ou marque cada ambiente com um toque para abrir a ficha dele.</p>
-      ${botoesNovo(true)}
-      <div class="pl-acoes g2">
-        <button class="btn btn-ghost" data-acao="fd-carregar">${fundoDoPav(L, pav) ? 'Planta de fundo' : '+ Planta de fundo (imagem)'}</button>
-        <button class="btn btn-ghost" data-acao="mc-novo">+ Marcador</button>
-      </div></div>`;
-    return;
-  }
-  const avisos = Planta.conferir(L, pav, lay).map(x => `<div class="alerta">${h(x)}</div>`).join('');
   if (ctx.escolha) { p.innerHTML = painelEscolha(); return; }
   if (ctx.item) {
     const html = painelItem(lay);
-    if (html) { p.innerHTML = avisos + html; return; }
+    if (html) { p.innerHTML = fechar + html; return; }
     ctx.item = null;
   }
   const a = ctx.sel && ambPorId(L, ctx.sel);
-  if (a && a.forma === 'marcador') { p.innerHTML = avisos + painelMarcador(a); return; }
-  if (!a) {
-    p.innerHTML = `${avisos}
-      ${htmlResumoStatus(L, pav)}
-      <p class="dica">Desenhe os ambientes e encoste um no outro: toque num ambiente e arraste; perto de outro ele gira e encosta (ímã), deixando a espessura da parede. Depois toque numa parede para inserir porta, janela ou ponto: se ali encostar outro ambiente, a porta liga os dois.</p>
-      ${botoesNovo(false)}
-      <div class="pl-acoes g2">
-        <button class="btn btn-ghost" data-acao="fd-carregar">${fundoDoPav(L, pav) ? 'Planta de fundo' : '+ Planta de fundo (imagem)'}</button>
-        <button class="btn btn-ghost" data-acao="mc-novo">+ Marcador</button>
-      </div>`;
-    return;
-  }
+  if (a && a.forma === 'marcador') { p.innerHTML = fechar + painelMarcador(a); return; }
+  if (!a) { p.innerHTML = ''; return; }
   const c = calc(a), R = lay.pos.get(a.id);
   const portas = lay.portas.filter(g => g.p.ambA === a.id || g.ambB === a.id);
   const formaTxt = a.forma === 'poli' ? `${R ? R.walls.length : '?'} paredes` : `${fmt(num(a.comp))} × ${fmt(num(a.larg))} m`;
-  p.innerHTML = `${avisos}
+  const listaPortas = portas.length ? `<div class="seg pl-portas">${portas.map(g => {
+    const x = g.p, deA = x.ambA === a.id;
+    const outro = ambPorId(L, deA ? g.ambB : x.ambA);
+    const par = deA ? nomeParede(a, +x.parede) : nomeParede(a, g.WB.k);
+    return `<button class="chip off" data-acao="pl-sel-porta" data-id="${h(x.id)}">${h(nomeModelo(x.modelo))} ${par} · ${fmt(num(x.largura))}${outro ? ' · ' + h(outro.codigo) : ''}</button>`;
+  }).join('')}</div>` : '<p class="dica">Sem portas ainda. Toque numa parede ou em <b>+ Porta</b>.</p>';
+  p.innerHTML = `${fechar}
     <div class="pl-sel">
       <div class="pl-sel-t"><b class="num">${h(a.codigo)}</b> ${h(a.nome || '(sem nome)')}</div>
-      <div class="pl-sel-s num">${formaTxt} · ${fmt(c.area)} m²${num(a.nivel) ? ' · NV ' + Planta.fmtNivel(num(a.nivel)) : ''}</div>
-      <div class="pl-sel-s">Arraste para mover: perto de outro ambiente ele encosta sozinho. Não deixa ficar por cima.</div>
+      <div class="pl-sel-s num">${formaTxt} · ${fmt(c.area)} m²${num(a.nivel) ? ' · NV ' + Planta.fmtNivel(num(a.nivel)) : ''}
+        <button class="st-tag st-${a.status || 'levantar'} pl-st" data-acao="pl-mais">${h(nomeStatus(a.status))}</button></div>
     </div>
-    ${chipsStatus(a.status)}
     <div class="pl-acoes g4">
       <button class="btn btn-primary" data-acao="pl-nova-porta">+ Porta</button>
       <button class="btn btn-ghost" data-acao="pl-novo-obj">+ Objeto</button>
       <button class="btn btn-ghost" data-acao="pl-editar-amb">Medidas</button>
       <a class="btn btn-ghost" href="#/l/${h(L.id)}/a/${h(a.id)}">Detalhes</a>
     </div>
-    ${portas.length ? `<div class="seg pl-portas">${portas.map(g => {
-      const x = g.p, deA = x.ambA === a.id;
-      const outro = ambPorId(L, deA ? g.ambB : x.ambA);
-      const par = deA ? nomeParede(a, +x.parede) : nomeParede(a, g.WB.k);
-      return `<button class="chip off" data-acao="pl-sel-porta" data-id="${h(x.id)}">${h(nomeModelo(x.modelo))} ${par} · ${fmt(num(x.largura))}${outro ? ' · ' + h(outro.codigo) : ''}</button>`;
-    }).join('')}</div>` : '<p class="dica">Sem portas ainda. Toque numa parede ou em <b>+ Porta</b>.</p>'}`;
+    <button class="pl-mais${ctx.plMais ? ' aberto' : ''}" data-acao="pl-mais">${ctx.plMais ? 'Menos' : `Situação e portas${portas.length ? ` (${portas.length})` : ''}`}</button>
+    ${ctx.plMais ? `${chipsStatus(a.status)}${listaPortas}` : ''}`;
 }
 
 function campoPe(rot, k, val, { numero = true, dica = '', extra = '', attr = 'data-pe' } = {}) {
@@ -1258,8 +1303,7 @@ function painelDesenho() {
         : `Toque no <b>canto ${letra(n + 1)}</b>, ou no canto A (ou em <b>Fechar</b>) para fechar o ambiente.`;
   const nome = a.nome ? ` ${h(a.nome)}` : '';
   return `<div class="pl-sel"><div class="pl-sel-t">Desenhando <b class="num">${h(a.codigo)}</b>${nome}${n ? ` <span class="dz-cont">· ${n} parede${n > 1 ? 's' : ''}</span>` : ''}</div>
-      <div class="pl-sel-s">${dica}</div>
-      <span class="dz-gesto">Um toque curto marca o canto; dois dedos movem e aproximam. Medidas e ângulos você corrige depois, tocando em cada parede.</span></div>
+      <div class="pl-sel-s">${dica}</div></div>
     <div class="pl-acoes g3">
       <button class="btn btn-ghost" data-acao="dz-desfazer"${n === 0 && !a.pos ? ' disabled' : ''}>Desfazer</button>
       <button class="btn btn-ghost perigo" data-acao="dz-cancelar">Cancelar</button>
@@ -2551,6 +2595,7 @@ document.addEventListener('change', async e => {
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-acao],[data-ov]');
   if (!b || b.disabled) return;
+  if (b.closest('#folha')) fecharFolha();
   try {
     if (b.dataset.ov) return await acaoOverlay(b.dataset.ov);
     await acao(b.dataset.acao, b);
@@ -2604,6 +2649,14 @@ async function acao(nome, b) {
     case 'pe-mais': if (ctx.item && ctx.item.tipo === 'porta') abrirPorta(ctx.item.id); break;
     case 'pe-vizinho': if (ctx.item && ctx.item.tipo === 'porta') abrirVizinho(ctx.item.id); break;
     case 'pl-3d': abrir3D(); break;
+    case 'pl-menu': folhaMenu(); break;
+    case 'pl-ferr': folhaFerramentas(); break;
+    case 'pl-fechar-sel':
+      if (ctx.item) ctx.item = null; else ctx.sel = null;
+      ctx.escolha = null;
+      desenharPlanta();
+      break;
+    case 'pl-mais': ctx.plMais = !ctx.plMais; desenharPlanta(); break;
     case 'fechar-3d': fechar3D(); break;
     case 'enq-3d': desenhar3D(true); break;
     case 'corte-3d': {
